@@ -274,7 +274,15 @@ def loader_cache_path(
         fields=fields,
     )
     source_dir = _sanitize_cache_segment(source)
-    return Path.home() / ".vibe-trading" / "cache" / "loaders" / source_dir / f"{key}.parquet"
+    return _loader_cache_home() / ".vibe-trading" / "cache" / "loaders" / source_dir / f"{key}.parquet"
+
+
+def _loader_cache_home() -> Path:
+    """Return the user home for loader cache, honoring HOME for test isolation."""
+    raw_home = os.getenv("HOME")
+    if raw_home:
+        return Path(raw_home).expanduser()
+    return Path.home()
 
 
 def loader_cache_range_is_final(end_date: str) -> bool:
