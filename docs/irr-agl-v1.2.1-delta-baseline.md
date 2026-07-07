@@ -129,6 +129,18 @@ Keep the `ExecPlan.md` ordering. The current tree makes the dependencies especia
 8. Phase 9 should remain a bridge only and must not claim production diagnostics.
 9. Phase 10 should remain final packaging, migration, security, and performance only.
 
+## Phase 0 Verification
+
+- Acceptance check `Test-Path docs/irr-agl-v1.2.1-delta-baseline.md`: `PASS doc exists`.
+- Acceptance check comparing `integration/irr-agl-v1.2.1-hardening...HEAD` for `.py`, `.ts`, and `.tsx` changes: `PASS doc only`.
+- Branch diff against `integration/irr-agl-v1.2.1-hardening`: `docs/irr-agl-v1.2.1-delta-baseline.md` only.
+- Required global regression `pytest --tb=short -q --ignore=agent/tests/e2e_backtest`: `FAILED` with 2 failures, 4726 passed, 6 skipped, 135 warnings in 219.24s.
+- Failing tests:
+  - `agent/tests/test_packaging_dependencies.py::test_harmonic_backend_is_not_a_core_install_dependency`
+  - `agent/tests/test_packaging_dependencies.py::test_channel_core_websocket_dependency_is_declared_for_baseline_installs`
+- Failure cause: both tests call `Path.read_text()` on `agent/requirements.txt` without an explicit encoding on Windows, causing `UnicodeDecodeError: 'gbk' codec can't decode byte 0x94 in position 186`.
+- Phase 0 action: recorded the failure as required and did not modify runtime or test code.
+
 ## Process Risks And Notes
 
 - The current branch, `origin/main`, `upstream/main`, `origin/integration/irr-agl-v1.2-closure`, and `origin/integration/irr-agl-v1.2.1-hardening` all point at the same visible commit during this audit. This is not a blocker for Phase 0, but it means Phase 0 is documenting a mostly pre-v1.2.1 implementation baseline.
