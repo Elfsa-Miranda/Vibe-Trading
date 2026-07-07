@@ -2,6 +2,38 @@ from __future__ import annotations
 
 import pandas as pd
 
+from src.alpha_foundry.common.errors import ConclusionLevel, HardFailureCode
+
+
+def make_alpha_foundry_factor_card_kwargs(
+    *,
+    factor_id: str = "limit_queue_pressure_proxy",
+    hard_failures: list[HardFailureCode] | None = None,
+    proxy_note: str | None = "EOD proxy only; no Level-2 queue alpha claim.",
+    trial_count: int | None = 8,
+    uses_execution_return: bool = True,
+) -> dict[str, object]:
+    return {
+        "factor_id": factor_id,
+        "hypothesis_id": factor_id,
+        "factor_definition_hash": f"hash-{factor_id}",
+        "falsification_report_ref": f"falsification-{factor_id}",
+        "conclusion_level": ConclusionLevel.research_candidate,
+        "key_metrics": {
+            "rank_ic_mean": 0.045,
+            "close_return_mean": 0.012,
+            "execution_return_mean": 0.009,
+        },
+        "hard_failures": hard_failures or [],
+        "warnings": [],
+        "next_action": "forward_track",
+        "trial_count": trial_count,
+        "proxy_note": proxy_note,
+        "uses_execution_return": uses_execution_return,
+        "has_close_return_diagnostics": True,
+        "evidence_refs": [f"evidence-{factor_id}"],
+    }
+
 
 def make_factor_output_frame() -> pd.DataFrame:
     return pd.DataFrame(
