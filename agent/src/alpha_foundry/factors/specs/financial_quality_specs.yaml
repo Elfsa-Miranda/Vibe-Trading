@@ -1,0 +1,118 @@
+schema_version: "2.1.0"
+forbidden_fields: &future_fields
+  - forward_return
+  - future_close
+  - future_volume
+  - next_day_tradability_outcome
+  - execution_return
+common_transform: &common_transform
+  - step: winsorize
+    params: {lower: 0.01, upper: 0.99}
+  - step: neutralize
+    params: {basis: standard_a_share}
+
+factors:
+  - factor_id: pit_profitability_acceleration
+    hypothesis_id: pit_profitability_acceleration
+    track: pit_financial_quality_revision
+    formula:
+      formula_id: pit_profitability_acceleration
+      formula_version: "1.0-contract"
+      pseudocode: "change in profitability after announcement only"
+      required_fields: [profitability, announcement_time, available_at]
+      forbidden_fields: *future_fields
+      signal_time: "after available_at"
+      data_availability_policy: available_at_required
+      proxy_note: "Adapter-only unless real available_at is proven."
+      formula_hash: "pit-profitability-acceleration-contract-v1"
+    transform_pipeline: *common_transform
+    universe_policy: a_share_default
+    tradability_policy: a_share_default
+    prediction_horizons: [20, 60]
+    benchmark: CSI_500
+    default_direction: long
+    conclusion_cap: exploratory
+
+  - factor_id: accrual_quality_risk
+    hypothesis_id: accrual_quality_risk
+    track: pit_financial_quality_revision
+    formula:
+      formula_id: accrual_quality_risk
+      formula_version: "1.0-contract"
+      pseudocode: "negative accrual quality score after announcement"
+      required_fields: [accruals, cashflow, earnings, announcement_time, available_at]
+      forbidden_fields: *future_fields
+      signal_time: "after available_at"
+      data_availability_policy: available_at_required
+      proxy_note: "Adapter-only unless real available_at is proven."
+      formula_hash: "accrual-quality-risk-contract-v1"
+    transform_pipeline: *common_transform
+    universe_policy: a_share_default
+    tradability_policy: a_share_default
+    prediction_horizons: [20, 60]
+    benchmark: CSI_500
+    default_direction: short
+    conclusion_cap: exploratory
+
+  - factor_id: cashflow_quality_confirmation
+    hypothesis_id: cashflow_quality_confirmation
+    track: pit_financial_quality_revision
+    formula:
+      formula_id: cashflow_quality_confirmation
+      formula_version: "1.0-contract"
+      pseudocode: "cashflow margin confirms earnings improvement"
+      required_fields: [cashflow_margin, earnings_growth, announcement_time, available_at]
+      forbidden_fields: *future_fields
+      signal_time: "after available_at"
+      data_availability_policy: available_at_required
+      proxy_note: "Adapter-only unless real available_at is proven."
+      formula_hash: "cashflow-quality-confirmation-contract-v1"
+    transform_pipeline: *common_transform
+    universe_policy: a_share_default
+    tradability_policy: a_share_default
+    prediction_horizons: [20, 60]
+    benchmark: CSI_500
+    default_direction: long
+    conclusion_cap: exploratory
+
+  - factor_id: quality_value_residual
+    hypothesis_id: quality_value_residual
+    track: pit_financial_quality_revision
+    formula:
+      formula_id: quality_value_residual
+      formula_version: "1.0-contract"
+      pseudocode: "value signal filtered by quality and industry residuals"
+      required_fields: [quality_score, valuation, industry, announcement_time, available_at]
+      forbidden_fields: *future_fields
+      signal_time: "after available_at and valuation timestamp"
+      data_availability_policy: available_at_required
+      proxy_note: "Adapter-only unless real available_at and valuation timestamp are proven."
+      formula_hash: "quality-value-residual-contract-v1"
+    transform_pipeline: *common_transform
+    universe_policy: a_share_default
+    tradability_policy: a_share_default
+    prediction_horizons: [20, 60]
+    benchmark: CSI_500
+    default_direction: long
+    conclusion_cap: exploratory
+
+  - factor_id: investment_efficiency_revision
+    hypothesis_id: investment_efficiency_revision
+    track: pit_financial_quality_revision
+    formula:
+      formula_id: investment_efficiency_revision
+      formula_version: "1.0-contract"
+      pseudocode: "capex / asset growth vs profitability revision"
+      required_fields: [capex, asset_growth, profitability_revision, announcement_time, available_at]
+      forbidden_fields: *future_fields
+      signal_time: "after available_at"
+      data_availability_policy: available_at_required
+      proxy_note: "Adapter-only unless real available_at is proven."
+      formula_hash: "investment-efficiency-revision-contract-v1"
+    transform_pipeline: *common_transform
+    universe_policy: a_share_default
+    tradability_policy: a_share_default
+    prediction_horizons: [20, 60]
+    benchmark: CSI_500
+    default_direction: long
+    conclusion_cap: exploratory

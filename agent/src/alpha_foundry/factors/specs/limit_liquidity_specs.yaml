@@ -1,0 +1,181 @@
+schema_version: "2.1.0"
+forbidden_fields: &future_fields
+  - forward_return
+  - future_close
+  - future_volume
+  - next_day_tradability_outcome
+  - execution_return
+common_transform: &common_transform
+  - step: winsorize
+    params: {lower: 0.01, upper: 0.99}
+  - step: rank
+    params: {by: date}
+
+factors:
+  - factor_id: limit_lock_strength
+    hypothesis_id: limit_lock_strength
+    track: limit_liquidity_microstructure
+    formula:
+      formula_id: limit_lock_strength
+      formula_version: "1.0"
+      pseudocode: "is_limit_up_t * consecutive_limit_up_days_t * min(1, volume_t / avg(volume, 5d shifted))"
+      required_fields: [close, limit_up_price, volume, prev_close]
+      forbidden_fields: *future_fields
+      signal_time: "T close"
+      data_availability_policy: bar_close_derived
+      proxy_note: "EOD strength proxy, not queue depth."
+      formula_hash: "limit-lock-strength-v1"
+    transform_pipeline: *common_transform
+    universe_policy: a_share_default
+    tradability_policy: a_share_limit_aware
+    prediction_horizons: [1, 3, 5]
+    benchmark: CSI_500
+    default_direction: long
+    conclusion_cap: exploratory
+
+  - factor_id: limit_lock_persistence
+    hypothesis_id: limit_lock_persistence
+    track: limit_liquidity_microstructure
+    formula:
+      formula_id: limit_lock_persistence
+      formula_version: "1.0"
+      pseudocode: "sum(is_limit_up_{t-k}, k=0..2) / 3"
+      required_fields: [close, limit_up_price]
+      forbidden_fields: *future_fields
+      signal_time: "T close"
+      data_availability_policy: bar_close_derived
+      proxy_note: "Recent EOD lock persistence; not executable by itself."
+      formula_hash: "limit-lock-persistence-v1"
+    transform_pipeline: *common_transform
+    universe_policy: a_share_default
+    tradability_policy: a_share_limit_aware
+    prediction_horizons: [1, 3, 5]
+    benchmark: CSI_500
+    default_direction: long
+    conclusion_cap: exploratory
+
+  - factor_id: failed_limit_breakout_reversal
+    hypothesis_id: failed_limit_breakout_reversal
+    track: limit_liquidity_microstructure
+    formula:
+      formula_id: failed_limit_breakout_reversal
+      formula_version: "1.0"
+      pseudocode: "1 if high_t >= limit_up_price_t and close_t < limit_up_price_t; score = -rank((close_t/limit_up_price_t)-1) * rank(volume_t/avg_volume_20)"
+      required_fields: [high, close, limit_up_price, volume]
+      forbidden_fields: *future_fields
+      signal_time: "T close"
+      data_availability_policy: bar_close_derived
+      proxy_note: null
+      formula_hash: "failed-limit-breakout-reversal-v1"
+    transform_pipeline: *common_transform
+    universe_policy: a_share_default
+    tradability_policy: a_share_limit_aware
+    prediction_horizons: [1, 3]
+    benchmark: CSI_500
+    default_direction: short
+    conclusion_cap: exploratory
+
+  - factor_id: post_limit_opening_pressure
+    hypothesis_id: post_limit_opening_pressure
+    track: limit_liquidity_microstructure
+    formula:
+      formula_id: post_limit_opening_pressure
+      formula_version: "1.0"
+      pseudocode: "for stocks limit_up at t-1: rank((open_t/prev_close_t)-1) * rank(turnover_t)"
+      required_fields: [open, prev_close, turnover, prior_limit_state]
+      forbidden_fields: *future_fields
+      signal_time: "T close after observing same-day open and close"
+      data_availability_policy: bar_close_derived
+      proxy_note: "Cannot trade at T open unless signal formed before open; default predicts T+1 execution_return."
+      formula_hash: "post-limit-opening-pressure-v1"
+    transform_pipeline: *common_transform
+    universe_policy: a_share_default
+    tradability_policy: a_share_limit_aware
+    prediction_horizons: [1, 3]
+    benchmark: CSI_500
+    default_direction: signed
+    conclusion_cap: exploratory
+
+  - factor_id: one_word_board_exclusion_alpha
+    hypothesis_id: one_word_board_exclusion_alpha
+    track: limit_liquidity_microstructure
+    formula:
+      formula_id: one_word_board_exclusion_alpha
+      formula_version: "1.0"
+      pseudocode: "is_one_word_board = open==high==low==close==limit_up_price and volume/avg_volume_20 < threshold"
+      required_fields: [open, high, low, close, limit_up_price, volume]
+      forbidden_fields: *future_fields
+      signal_time: "T close"
+      data_availability_policy: bar_close_derived
+      proxy_note: "Tradability mask only; cannot create alpha claim alone."
+      formula_hash: "one-word-board-exclusion-v1"
+    transform_pipeline: []
+    universe_policy: a_share_default
+    tradability_policy: one_word_board_exclusion
+    prediction_horizons: [1]
+    benchmark: CSI_500
+    default_direction: signed
+    conclusion_cap: exploratory
+
+  - factor_id: limit_gap_decay
+    hypothesis_id: limit_gap_decay
+    track: limit_liquidity_microstructure
+    formula:
+      formula_id: limit_gap_decay
+      formula_version: "1.0"
+      pseudocode: "for prior limit_up: rank((open_t/prev_close_t)-1) - rank((close_t/open_t)-1)"
+      required_fields: [open, close, prev_close, prior_limit_state]
+      forbidden_fields: *future_fields
+      signal_time: "T close"
+      data_availability_policy: bar_close_derived
+      proxy_note: null
+      formula_hash: "limit-gap-decay-v1"
+    transform_pipeline: *common_transform
+    universe_policy: a_share_default
+    tradability_policy: a_share_limit_aware
+    prediction_horizons: [1, 3]
+    benchmark: CSI_500
+    default_direction: signed
+    conclusion_cap: exploratory
+
+  - factor_id: limit_down_liquidity_recovery
+    hypothesis_id: limit_down_liquidity_recovery
+    track: limit_liquidity_microstructure
+    formula:
+      formula_id: limit_down_liquidity_recovery
+      formula_version: "1.0"
+      pseudocode: "for prior limit_down: rank(volume_t/avg_volume_20) * rank((close_t/low_t)-1)"
+      required_fields: [low, close, volume, limit_down_price]
+      forbidden_fields: *future_fields
+      signal_time: "T close"
+      data_availability_policy: bar_close_derived
+      proxy_note: "Long only if execution is feasible under limit/suspension masks."
+      formula_hash: "limit-down-liquidity-recovery-v1"
+    transform_pipeline: *common_transform
+    universe_policy: a_share_default
+    tradability_policy: a_share_limit_aware
+    prediction_horizons: [1, 3, 5]
+    benchmark: CSI_500
+    default_direction: long
+    conclusion_cap: exploratory
+
+  - factor_id: limit_queue_pressure_proxy
+    hypothesis_id: limit_queue_pressure_proxy
+    track: limit_liquidity_microstructure
+    formula:
+      formula_id: limit_queue_pressure_proxy
+      formula_version: "1.0-eod-proxy"
+      pseudocode: "Level-2 default: queue_size_at_limit / free_float_shares; EOD fallback: is_limit_up_t * (1 - volume_t/avg_volume_20)"
+      required_fields: [close, limit_up_price, volume, avg_volume_20]
+      forbidden_fields: *future_fields
+      signal_time: "T close"
+      data_availability_policy: bar_close_derived
+      proxy_note: "Without Level-2/tick/queue data this is only an exploratory EOD proxy and cannot claim queue alpha."
+      formula_hash: "limit-queue-pressure-proxy-eod-v1"
+    transform_pipeline: *common_transform
+    universe_policy: a_share_default
+    tradability_policy: a_share_limit_aware
+    prediction_horizons: [1, 3]
+    benchmark: CSI_500
+    default_direction: long
+    conclusion_cap: exploratory

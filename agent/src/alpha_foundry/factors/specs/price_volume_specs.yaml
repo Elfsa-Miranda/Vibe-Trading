@@ -1,0 +1,118 @@
+schema_version: "2.1.0"
+forbidden_fields: &future_fields
+  - forward_return
+  - future_close
+  - future_volume
+  - next_day_tradability_outcome
+  - execution_return
+common_transform: &common_transform
+  - step: winsorize
+    params: {lower: 0.01, upper: 0.99}
+  - step: zscore
+    params: {by: date}
+
+factors:
+  - factor_id: residual_20d_momentum
+    hypothesis_id: residual_20d_momentum
+    track: residual_price_volume_behavior
+    formula:
+      formula_id: residual_20d_momentum
+      formula_version: "1.0"
+      pseudocode: "resid_20d_return = ret_20d - fitted(ret_20d ~ industry + log_float_mktcap + beta_60d + liquidity_proxy)"
+      required_fields: [close, industry, float_mktcap, benchmark_returns, turnover]
+      forbidden_fields: *future_fields
+      signal_time: "T close"
+      data_availability_policy: bar_close_derived
+      proxy_note: "Residual basis fixed by RiskModelSpec."
+      formula_hash: "residual-20d-momentum-v1"
+    transform_pipeline: *common_transform
+    universe_policy: a_share_default
+    tradability_policy: a_share_default
+    prediction_horizons: [5, 10, 20]
+    benchmark: CSI_500
+    default_direction: long
+    conclusion_cap: exploratory
+
+  - factor_id: liquidity_conditioned_reversal
+    hypothesis_id: liquidity_conditioned_reversal
+    track: residual_price_volume_behavior
+    formula:
+      formula_id: liquidity_conditioned_reversal
+      formula_version: "1.0"
+      pseudocode: "-ret_5d * I(turnover_5d_z > 1 and amihud_20d_z improving)"
+      required_fields: [close, turnover, amount]
+      forbidden_fields: *future_fields
+      signal_time: "T close"
+      data_availability_policy: bar_close_derived
+      proxy_note: "Reversal only after liquidity shock."
+      formula_hash: "liquidity-conditioned-reversal-v1"
+    transform_pipeline: *common_transform
+    universe_policy: a_share_default
+    tradability_policy: a_share_default
+    prediction_horizons: [1, 5, 10]
+    benchmark: CSI_500
+    default_direction: long_short
+    conclusion_cap: exploratory
+
+  - factor_id: abnormal_turnover_unwind
+    hypothesis_id: abnormal_turnover_unwind
+    track: residual_price_volume_behavior
+    formula:
+      formula_id: abnormal_turnover_unwind
+      formula_version: "1.0"
+      pseudocode: "-rank(turnover_1d / avg_turnover_20d) * rank(abs(ret_1d))"
+      required_fields: [close, turnover]
+      forbidden_fields: *future_fields
+      signal_time: "T close"
+      data_availability_policy: bar_close_derived
+      proxy_note: "Attention/crowding unwind test."
+      formula_hash: "abnormal-turnover-unwind-v1"
+    transform_pipeline: *common_transform
+    universe_policy: a_share_default
+    tradability_policy: a_share_default
+    prediction_horizons: [1, 5]
+    benchmark: CSI_500
+    default_direction: short
+    conclusion_cap: exploratory
+
+  - factor_id: volume_price_divergence_reversal
+    hypothesis_id: volume_price_divergence_reversal
+    track: residual_price_volume_behavior
+    formula:
+      formula_id: volume_price_divergence_reversal
+      formula_version: "1.0"
+      pseudocode: "-sign(ret_5d) * rank(volume_5d_z - abs(ret_5d_z))"
+      required_fields: [close, volume]
+      forbidden_fields: *future_fields
+      signal_time: "T close"
+      data_availability_policy: bar_close_derived
+      proxy_note: "Divergence implies exhaustion."
+      formula_hash: "volume-price-divergence-reversal-v1"
+    transform_pipeline: *common_transform
+    universe_policy: a_share_default
+    tradability_policy: a_share_default
+    prediction_horizons: [1, 5, 10]
+    benchmark: CSI_500
+    default_direction: long_short
+    conclusion_cap: exploratory
+
+  - factor_id: volatility_compression_breakout_quality
+    hypothesis_id: volatility_compression_breakout_quality
+    track: residual_price_volume_behavior
+    formula:
+      formula_id: volatility_compression_breakout_quality
+      formula_version: "1.0"
+      pseudocode: "rank(breakout_ret_3d) * I(realized_vol_20d_z < -1 and turnover_confirm > 0)"
+      required_fields: [close, high, low, turnover]
+      forbidden_fields: *future_fields
+      signal_time: "T close"
+      data_availability_policy: bar_close_derived
+      proxy_note: "Default direction is momentum, not mean reversion."
+      formula_hash: "volatility-compression-breakout-quality-v1"
+    transform_pipeline: *common_transform
+    universe_policy: a_share_default
+    tradability_policy: a_share_default
+    prediction_horizons: [5, 10, 20]
+    benchmark: CSI_500
+    default_direction: long
+    conclusion_cap: exploratory
