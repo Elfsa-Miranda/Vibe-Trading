@@ -1,0 +1,346 @@
+schema_version: "2.1.0"
+required_falsification_gates: &required_gates
+  - pit
+  - tradability
+  - neutralization
+  - regime
+  - cost
+  - oos
+
+hypotheses:
+  - hypothesis_id: limit_lock_strength
+    name: Limit lock strength
+    track: limit_liquidity_microstructure
+    market_mechanism: Strong limit-up locks reflect constrained supply and crowding pressure after daily price limits.
+    economic_rationale: A stronger EOD lock proxy may predict near-term continuation, but only after executable-return validation.
+    required_data: [close, limit_up_price, volume, prev_close]
+    pit_requirements: [bar_close_derived, causal_volume_window]
+    tradability_constraints: [limit_up_buy_block, suspension_mask, st_mask, new_stock_mask]
+    formation_window: "5 trading days"
+    prediction_horizon: "1-5 trading days"
+    expected_decay: short
+    direction: long
+    known_risks: [limit_survivorship_bias, execution_unavailable, crowding]
+    known_public_analogues: [limit_up_momentum]
+    crowding_risk: high
+    falsification_tests_required: *required_gates
+    invalidation_conditions: [execution_return_not_positive_after_cost, placebo_comparable, negative_frequent_regime_ic]
+
+  - hypothesis_id: limit_lock_persistence
+    name: Limit lock persistence
+    track: limit_liquidity_microstructure
+    market_mechanism: Repeated recent limit-up states may indicate persistent demand imbalance.
+    economic_rationale: Persistence can be informative only if locked days are not counted as tradable winners.
+    required_data: [close, limit_up_price]
+    pit_requirements: [bar_close_derived, causal_limit_state]
+    tradability_constraints: [limit_up_buy_block, suspension_mask, one_word_board_mask]
+    formation_window: "3 trading days"
+    prediction_horizon: "1-5 trading days"
+    expected_decay: short
+    direction: long
+    known_risks: [untradable_winner_bias, crowded_public_signal]
+    known_public_analogues: [limit_up_count]
+    crowding_risk: high
+    falsification_tests_required: *required_gates
+    invalidation_conditions: [tradability_adjusted_ic_collapse, cost_capacity_failure]
+
+  - hypothesis_id: failed_limit_breakout_reversal
+    name: Failed limit breakout reversal
+    track: limit_liquidity_microstructure
+    market_mechanism: Intraday touch of limit-up followed by failure into close can reveal exhausted demand.
+    economic_rationale: Failed breakout pressure should reverse if the demand imbalance is not durable.
+    required_data: [high, close, limit_up_price, volume]
+    pit_requirements: [bar_close_derived]
+    tradability_constraints: [limit_state_mask, suspension_mask, t_plus_one_execution]
+    formation_window: "1 trading day"
+    prediction_horizon: "1-3 trading days"
+    expected_decay: very_short
+    direction: short
+    known_risks: [same_day_observability, high_turnover_noise]
+    known_public_analogues: [failed_breakout_reversal]
+    crowding_risk: medium
+    falsification_tests_required: *required_gates
+    invalidation_conditions: [neutralized_ic_collapse, placebo_comparable]
+
+  - hypothesis_id: post_limit_opening_pressure
+    name: Post-limit opening pressure
+    track: limit_liquidity_microstructure
+    market_mechanism: The open after a prior limit-up can reveal whether overnight demand clears or fades.
+    economic_rationale: Opening gap plus turnover is a pressure proxy, but default signal forms at T close.
+    required_data: [open, prev_close, turnover, prior_limit_state]
+    pit_requirements: [bar_close_derived, prior_limit_state]
+    tradability_constraints: [t_plus_one_execution, limit_state_mask, suspension_mask]
+    formation_window: "1 trading day after prior limit state"
+    prediction_horizon: "1-3 trading days"
+    expected_decay: very_short
+    direction: signed
+    known_risks: [using_open_before_signal_time, turnover_proxy_noise]
+    known_public_analogues: [post_limit_gap]
+    crowding_risk: medium
+    falsification_tests_required: *required_gates
+    invalidation_conditions: [signal_time_violation, execution_return_not_available]
+
+  - hypothesis_id: one_word_board_exclusion_alpha
+    name: One-word board exclusion mask
+    track: limit_liquidity_microstructure
+    market_mechanism: One-word boards are often not executable and must be excluded from tradable samples.
+    economic_rationale: This is a tradability mask, not a standalone alpha claim.
+    required_data: [open, high, low, close, limit_up_price, volume]
+    pit_requirements: [bar_close_derived]
+    tradability_constraints: [one_word_board_mask, limit_up_buy_block]
+    formation_window: "1 trading day"
+    prediction_horizon: "mask only"
+    expected_decay: not_applicable
+    direction: unknown
+    known_risks: [mask_misused_as_alpha]
+    known_public_analogues: [one_word_board_filter]
+    crowding_risk: low
+    falsification_tests_required: *required_gates
+    invalidation_conditions: [used_as_standalone_alpha_claim]
+    exploratory_only: true
+
+  - hypothesis_id: limit_gap_decay
+    name: Limit gap decay
+    track: limit_liquidity_microstructure
+    market_mechanism: Prior limit-up gaps can fade when intraday demand weakens after the open.
+    economic_rationale: Gap strength minus open-to-close fade captures exhaustion after prior limit-up.
+    required_data: [open, close, prev_close, prior_limit_state]
+    pit_requirements: [bar_close_derived, prior_limit_state]
+    tradability_constraints: [t_plus_one_execution, limit_state_mask]
+    formation_window: "1 trading day after prior limit state"
+    prediction_horizon: "1-3 trading days"
+    expected_decay: very_short
+    direction: signed
+    known_risks: [same_day_observability, gap_chasing]
+    known_public_analogues: [gap_fade]
+    crowding_risk: medium
+    falsification_tests_required: *required_gates
+    invalidation_conditions: [regime_specific_only, placebo_comparable]
+
+  - hypothesis_id: limit_down_liquidity_recovery
+    name: Limit-down liquidity recovery
+    track: limit_liquidity_microstructure
+    market_mechanism: Volume recovery and close-off-low behavior after limit-down can indicate selling pressure clearing.
+    economic_rationale: Recovery is usable only when the future execution path is feasible.
+    required_data: [low, close, volume, limit_down_price]
+    pit_requirements: [bar_close_derived]
+    tradability_constraints: [limit_down_sell_block, suspension_mask, execution_return_required]
+    formation_window: "1 trading day"
+    prediction_horizon: "1-5 trading days"
+    expected_decay: short
+    direction: long
+    known_risks: [liquidity_trap, unexecutable_rebound]
+    known_public_analogues: [limit_down_reversal]
+    crowding_risk: medium
+    falsification_tests_required: *required_gates
+    invalidation_conditions: [execution_failure_rate_high, cost_breakeven_weak]
+
+  - hypothesis_id: limit_queue_pressure_proxy
+    name: Limit queue pressure proxy
+    track: limit_liquidity_microstructure
+    market_mechanism: True limit queue pressure requires Level-2 or tick queue data.
+    economic_rationale: EOD volume fallback can only proxy unfilled pressure and cannot claim order-book queue alpha.
+    required_data: [close, limit_up_price, volume, avg_volume_20]
+    pit_requirements: [bar_close_derived]
+    tradability_constraints: [limit_state_mask, execution_return_required]
+    formation_window: "1 trading day"
+    prediction_horizon: "1-3 trading days"
+    expected_decay: very_short
+    direction: long
+    known_risks: [eod_proxy_overclaim, level2_unavailable]
+    known_public_analogues: [limit_queue_pressure]
+    crowding_risk: high
+    falsification_tests_required: *required_gates
+    invalidation_conditions: [level2_claim_without_level2_data, proxy_placebo_comparable]
+    proxy_note: "Level-2 queue_size_at_limit is unavailable; EOD fallback uses is_limit_up_t * (1 - volume_t / avg_volume_20) and remains exploratory only."
+    exploratory_only: true
+
+  - hypothesis_id: residual_20d_momentum
+    name: Residual 20d momentum
+    track: residual_price_volume_behavior
+    market_mechanism: Price momentum after removing industry, size, beta and liquidity exposures may capture idiosyncratic continuation.
+    economic_rationale: Residualization separates mechanism from broad risk and liquidity crowding.
+    required_data: [close, industry, float_mktcap, benchmark_returns, turnover]
+    pit_requirements: [bar_close_derived, pit_industry_membership]
+    tradability_constraints: [tradability_mask, t_plus_one_execution]
+    formation_window: "20 trading days"
+    prediction_horizon: "5-20 trading days"
+    expected_decay: medium
+    direction: long
+    known_risks: [neutralized_ic_collapse, public_momentum_crowding]
+    known_public_analogues: [residual_momentum, qlib_resi20]
+    crowding_risk: high
+    falsification_tests_required: *required_gates
+    invalidation_conditions: [neutralized_ic_below_threshold, high_public_correlation]
+
+  - hypothesis_id: liquidity_conditioned_reversal
+    name: Liquidity-conditioned reversal
+    track: residual_price_volume_behavior
+    market_mechanism: Short-term reversal is more plausible after a liquidity shock starts normalizing.
+    economic_rationale: Liquidity condition gates noisy mean reversion and avoids generic reversal mining.
+    required_data: [close, turnover, amount]
+    pit_requirements: [bar_close_derived]
+    tradability_constraints: [tradability_mask, cost_model_required]
+    formation_window: "5-20 trading days"
+    prediction_horizon: "1-10 trading days"
+    expected_decay: short
+    direction: long_short
+    known_risks: [turnover_proxy_noise, high_cost_turnover]
+    known_public_analogues: [short_term_reversal]
+    crowding_risk: medium
+    falsification_tests_required: *required_gates
+    invalidation_conditions: [cost_breakeven_weak, placebo_comparable]
+
+  - hypothesis_id: abnormal_turnover_unwind
+    name: Abnormal turnover unwind
+    track: residual_price_volume_behavior
+    market_mechanism: Abnormal one-day turnover with large absolute return can indicate attention crowding that unwinds.
+    economic_rationale: High turnover shocks should decay if not supported by fundamentals or persistent demand.
+    required_data: [close, turnover]
+    pit_requirements: [bar_close_derived]
+    tradability_constraints: [tradability_mask, capacity_check]
+    formation_window: "20 trading days"
+    prediction_horizon: "1-5 trading days"
+    expected_decay: short
+    direction: short
+    known_risks: [crowding, capacity_failure]
+    known_public_analogues: [turnover_reversal]
+    crowding_risk: high
+    falsification_tests_required: *required_gates
+    invalidation_conditions: [capacity_weak, regime_failure]
+
+  - hypothesis_id: volume_price_divergence_reversal
+    name: Volume-price divergence reversal
+    track: residual_price_volume_behavior
+    market_mechanism: Volume acceleration without proportional price movement may signal exhaustion.
+    economic_rationale: Divergence is a mechanism hypothesis and must survive placebo volume controls.
+    required_data: [close, volume]
+    pit_requirements: [bar_close_derived]
+    tradability_constraints: [tradability_mask, cost_model_required]
+    formation_window: "5 trading days"
+    prediction_horizon: "1-10 trading days"
+    expected_decay: short
+    direction: long_short
+    known_risks: [volume_proxy_noise, placebo_comparable]
+    known_public_analogues: [volume_price_divergence]
+    crowding_risk: medium
+    falsification_tests_required: *required_gates
+    invalidation_conditions: [placebo_comparable, neutralized_ic_collapse]
+
+  - hypothesis_id: volatility_compression_breakout_quality
+    name: Volatility compression breakout quality
+    track: residual_price_volume_behavior
+    market_mechanism: Breakouts after volatility compression and turnover confirmation may be higher quality momentum.
+    economic_rationale: Compression plus confirmation distinguishes momentum from noisy range expansion.
+    required_data: [close, high, low, turnover]
+    pit_requirements: [bar_close_derived]
+    tradability_constraints: [tradability_mask, t_plus_one_execution]
+    formation_window: "20 trading days"
+    prediction_horizon: "5-20 trading days"
+    expected_decay: medium
+    direction: long
+    known_risks: [momentum_crowding, regime_failure]
+    known_public_analogues: [breakout_momentum, volatility_compression]
+    crowding_risk: medium
+    falsification_tests_required: *required_gates
+    invalidation_conditions: [negative_high_frequency_regime_ic, public_factor_correlation_high]
+
+  - hypothesis_id: pit_profitability_acceleration
+    name: PIT profitability acceleration
+    track: pit_financial_quality_revision
+    market_mechanism: Profitability improvement after announcement may reprice quality.
+    economic_rationale: Financial quality requires real available_at or conservative announcement proxy.
+    required_data: [profitability, announcement_time, available_at]
+    pit_requirements: [available_at_required]
+    tradability_constraints: [tradability_mask]
+    formation_window: "latest announced report"
+    prediction_horizon: "20-60 trading days"
+    expected_decay: medium
+    direction: long
+    known_risks: [available_at_missing, report_period_end_lookahead]
+    known_public_analogues: [profitability_quality]
+    crowding_risk: medium
+    falsification_tests_required: *required_gates
+    invalidation_conditions: [available_at_missing, pit_violation]
+    proxy_note: "Financial quality remains data-gated until real available_at is proven."
+    exploratory_only: true
+
+  - hypothesis_id: accrual_quality_risk
+    name: Accrual quality risk
+    track: pit_financial_quality_revision
+    market_mechanism: Poor accrual quality can signal lower earnings persistence after reporting.
+    economic_rationale: Accrual factors are invalid without announcement-time safe availability.
+    required_data: [accruals, cashflow, earnings, announcement_time, available_at]
+    pit_requirements: [available_at_required]
+    tradability_constraints: [tradability_mask]
+    formation_window: "latest announced report"
+    prediction_horizon: "20-60 trading days"
+    expected_decay: medium
+    direction: short
+    known_risks: [available_at_missing, restatement_bias]
+    known_public_analogues: [accrual_quality]
+    crowding_risk: medium
+    falsification_tests_required: *required_gates
+    invalidation_conditions: [available_at_missing, proxy_only_overclaim]
+    proxy_note: "Financial quality remains data-gated until real available_at is proven."
+    exploratory_only: true
+
+  - hypothesis_id: cashflow_quality_confirmation
+    name: Cashflow quality confirmation
+    track: pit_financial_quality_revision
+    market_mechanism: Cashflow confirmation can validate earnings improvement after announcement.
+    economic_rationale: Confirmation signals must be timestamped by availability, not report period end.
+    required_data: [cashflow_margin, earnings_growth, announcement_time, available_at]
+    pit_requirements: [available_at_required]
+    tradability_constraints: [tradability_mask]
+    formation_window: "latest announced report"
+    prediction_horizon: "20-60 trading days"
+    expected_decay: medium
+    direction: long
+    known_risks: [available_at_missing, report_period_end_lookahead]
+    known_public_analogues: [cashflow_quality]
+    crowding_risk: medium
+    falsification_tests_required: *required_gates
+    invalidation_conditions: [available_at_missing, pit_violation]
+    proxy_note: "Financial quality remains data-gated until real available_at is proven."
+    exploratory_only: true
+
+  - hypothesis_id: quality_value_residual
+    name: Quality value residual
+    track: pit_financial_quality_revision
+    market_mechanism: Quality-adjusted valuation may reprice when quality is announced and tradable.
+    economic_rationale: Requires both quality availability and valuation timestamp safety.
+    required_data: [quality_score, valuation, industry, announcement_time, available_at]
+    pit_requirements: [available_at_required, valuation_timestamp_required]
+    tradability_constraints: [tradability_mask]
+    formation_window: "latest announced report"
+    prediction_horizon: "20-60 trading days"
+    expected_decay: medium
+    direction: long
+    known_risks: [available_at_missing, valuation_timestamp_missing]
+    known_public_analogues: [quality_value]
+    crowding_risk: high
+    falsification_tests_required: *required_gates
+    invalidation_conditions: [available_at_missing, valuation_timestamp_missing]
+    proxy_note: "Financial quality remains data-gated until real available_at is proven."
+    exploratory_only: true
+
+  - hypothesis_id: investment_efficiency_revision
+    name: Investment efficiency revision
+    track: pit_financial_quality_revision
+    market_mechanism: Asset growth and capex efficiency revisions may reveal improving capital allocation.
+    economic_rationale: Efficiency revision requires real announcement availability to avoid lookahead.
+    required_data: [capex, asset_growth, profitability_revision, announcement_time, available_at]
+    pit_requirements: [available_at_required]
+    tradability_constraints: [tradability_mask]
+    formation_window: "latest announced report"
+    prediction_horizon: "20-60 trading days"
+    expected_decay: medium
+    direction: long
+    known_risks: [available_at_missing, accounting_lag]
+    known_public_analogues: [investment_efficiency]
+    crowding_risk: medium
+    falsification_tests_required: *required_gates
+    invalidation_conditions: [available_at_missing, pit_violation]
+    proxy_note: "Financial quality remains data-gated until real available_at is proven."
+    exploratory_only: true
