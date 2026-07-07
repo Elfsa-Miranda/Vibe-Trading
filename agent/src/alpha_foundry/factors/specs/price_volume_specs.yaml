@@ -19,7 +19,7 @@ factors:
       formula_id: residual_20d_momentum
       formula_version: "1.0"
       pseudocode: "resid_20d_return = ret_20d - fitted(ret_20d ~ industry + log_float_mktcap + beta_60d + liquidity_proxy)"
-      required_fields: [close, industry, float_mktcap, benchmark_returns, turnover]
+      required_fields: [close, ret_20d, industry, float_mktcap, beta_60d, benchmark_returns, turnover, log_avg_daily_turnover_20d]
       forbidden_fields: *future_fields
       signal_time: "T close"
       data_availability_policy: bar_close_derived
@@ -40,7 +40,7 @@ factors:
       formula_id: liquidity_conditioned_reversal
       formula_version: "1.0"
       pseudocode: "-ret_5d * I(turnover_5d_z > 1 and amihud_20d_z improving)"
-      required_fields: [close, turnover, amount]
+      required_fields: [close, turnover, amount, ret_5d, turnover_5d_z, amihud_20d_z, prev_amihud_20d_z]
       forbidden_fields: *future_fields
       signal_time: "T close"
       data_availability_policy: bar_close_derived
@@ -61,7 +61,7 @@ factors:
       formula_id: abnormal_turnover_unwind
       formula_version: "1.0"
       pseudocode: "-rank(turnover_1d / avg_turnover_20d) * rank(abs(ret_1d))"
-      required_fields: [close, turnover]
+      required_fields: [close, turnover, avg_turnover_20d, ret_1d]
       forbidden_fields: *future_fields
       signal_time: "T close"
       data_availability_policy: bar_close_derived
@@ -82,7 +82,7 @@ factors:
       formula_id: volume_price_divergence_reversal
       formula_version: "1.0"
       pseudocode: "-sign(ret_5d) * rank(volume_5d_z - abs(ret_5d_z))"
-      required_fields: [close, volume]
+      required_fields: [close, volume, ret_5d, ret_5d_z, volume_5d_z]
       forbidden_fields: *future_fields
       signal_time: "T close"
       data_availability_policy: bar_close_derived
@@ -103,7 +103,7 @@ factors:
       formula_id: volatility_compression_breakout_quality
       formula_version: "1.0"
       pseudocode: "rank(breakout_ret_3d) * I(realized_vol_20d_z < -1 and turnover_confirm > 0)"
-      required_fields: [close, high, low, turnover]
+      required_fields: [close, high, low, turnover, breakout_ret_3d, realized_vol_20d_z, turnover_confirm]
       forbidden_fields: *future_fields
       signal_time: "T close"
       data_availability_policy: bar_close_derived

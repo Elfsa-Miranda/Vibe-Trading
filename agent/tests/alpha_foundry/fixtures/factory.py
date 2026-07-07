@@ -426,3 +426,91 @@ def make_limit_liquidity_factor_input_frame() -> pd.DataFrame:
     )
 
     return pd.DataFrame(rows)
+
+
+def make_price_volume_factor_input_frame() -> pd.DataFrame:
+    """Single-date fixture with deterministic residual price/volume scenarios."""
+
+    current = pd.Timestamp("2026-01-05")
+
+    def row(
+        *,
+        symbol: str,
+        close: float = 10.0,
+        high: float = 10.5,
+        low: float = 9.5,
+        volume: float = 100.0,
+        turnover: float = 1.0,
+        amount: float = 1_000_000.0,
+        ret_20d: float = 0.0,
+        industry: str = "bank",
+        float_mktcap: float = 100.0,
+        beta_60d: float = 1.0,
+        benchmark_returns: float = 0.0,
+        log_avg_daily_turnover_20d: float = 2.0,
+        ret_5d: float = 0.0,
+        turnover_5d_z: float = 0.0,
+        amihud_20d_z: float = 0.0,
+        prev_amihud_20d_z: float = 0.0,
+        avg_turnover_20d: float = 1.0,
+        ret_1d: float = 0.0,
+        ret_5d_z: float = 0.0,
+        volume_5d_z: float = 0.0,
+        breakout_ret_3d: float = 0.0,
+        realized_vol_20d_z: float = 0.0,
+        turnover_confirm: float = 0.0,
+    ) -> dict[str, object]:
+        return {
+            "date": current,
+            "symbol": symbol,
+            "close": close,
+            "high": high,
+            "low": low,
+            "volume": volume,
+            "turnover": turnover,
+            "amount": amount,
+            "ret_20d": ret_20d,
+            "industry": industry,
+            "float_mktcap": float_mktcap,
+            "beta_60d": beta_60d,
+            "benchmark_returns": benchmark_returns,
+            "log_avg_daily_turnover_20d": log_avg_daily_turnover_20d,
+            "ret_5d": ret_5d,
+            "turnover_5d_z": turnover_5d_z,
+            "amihud_20d_z": amihud_20d_z,
+            "prev_amihud_20d_z": prev_amihud_20d_z,
+            "avg_turnover_20d": avg_turnover_20d,
+            "ret_1d": ret_1d,
+            "ret_5d_z": ret_5d_z,
+            "volume_5d_z": volume_5d_z,
+            "breakout_ret_3d": breakout_ret_3d,
+            "realized_vol_20d_z": realized_vol_20d_z,
+            "turnover_confirm": turnover_confirm,
+        }
+
+    return pd.DataFrame(
+        [
+            row(symbol="RES_A", ret_20d=0.10),
+            row(symbol="RES_B", ret_20d=0.04),
+            row(symbol="RES_C", ret_20d=-0.02),
+            row(symbol="LIQ_A", ret_5d=0.04, turnover_5d_z=1.5, amihud_20d_z=-0.5, prev_amihud_20d_z=0.2),
+            row(symbol="LIQ_B", ret_5d=-0.03, turnover_5d_z=1.2, amihud_20d_z=-0.2, prev_amihud_20d_z=0.1),
+            row(symbol="LIQ_C", ret_5d=0.05, turnover_5d_z=0.4, amihud_20d_z=0.2, prev_amihud_20d_z=0.1),
+            row(symbol="ABN_A", turnover=4.0, avg_turnover_20d=2.0, ret_1d=0.03),
+            row(symbol="ABN_B", turnover=1.0, avg_turnover_20d=1.0, ret_1d=-0.01),
+            row(symbol="DIV_A", ret_5d=0.05, ret_5d_z=0.5, volume_5d_z=2.0),
+            row(symbol="DIV_B", ret_5d=-0.04, ret_5d_z=-0.8, volume_5d_z=1.0),
+            row(
+                symbol="VOL_A",
+                breakout_ret_3d=0.04,
+                realized_vol_20d_z=-1.5,
+                turnover_confirm=0.2,
+            ),
+            row(
+                symbol="VOL_B",
+                breakout_ret_3d=0.01,
+                realized_vol_20d_z=-1.5,
+                turnover_confirm=-0.1,
+            ),
+        ]
+    )
