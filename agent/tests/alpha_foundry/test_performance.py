@@ -6,6 +6,7 @@ import pandas as pd
 
 from src.alpha_foundry.diagnostics.falsification import run_factor_falsification
 from src.alpha_foundry.overfit.trial_ledger import TrialLedger
+from src.alpha_foundry.portfolio.optimizer import PortfolioConstraints, construct_long_only_top_n_portfolio
 
 
 def _fixture(factor_id: str, horizon: int) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -68,4 +69,33 @@ def test_falsification_performance_smoke() -> None:
     elapsed = time.perf_counter() - started
     assert ledger.trial_count(family_id="residual_price_volume_behavior") == 100
     assert elapsed < 5.0
+
+
+def test_portfolio_optimizer_performance_smoke() -> None:
+    scores = pd.DataFrame(
+        {
+            "symbol": [f"S{i:04d}" for i in range(1000)],
+            "score": [1000 - i for i in range(1000)],
+            "sector": [f"sector_{i % 20}" for i in range(1000)],
+            "adv": [50_000_000.0 for _ in range(1000)],
+            "price": [10.0 + (i % 50) for i in range(1000)],
+        }
+    )
+    constraints = PortfolioConstraints(
+        top_n=100,
+        single_name_cap=0.02,
+        sector_cap=0.15,
+        turnover_cap=1.0,
+        adv_cap=0.05,
+        benchmark_id="CSI_500_EW",
+        portfolio_notional=10_000_000.0,
+    )
+
+    started = time.perf_counter()
+    report = construct_long_only_top_n_portfolio(scores, constraints=constraints)
+    elapsed = time.perf_counter() - started
+
+    assert len(report.weights) <= 100
+    assert report.hard_failures == []
+    assert elapsed < 3.0
 
