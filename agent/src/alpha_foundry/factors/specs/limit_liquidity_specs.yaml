@@ -61,7 +61,7 @@ factors:
       formula_id: failed_limit_breakout_reversal
       formula_version: "1.0"
       pseudocode: "1 if high_t >= limit_up_price_t and close_t < limit_up_price_t; score = -rank((close_t/limit_up_price_t)-1) * rank(volume_t/avg_volume_20)"
-      required_fields: [high, close, limit_up_price, volume]
+      required_fields: [high, close, limit_up_price, volume, avg_volume_20]
       forbidden_fields: *future_fields
       signal_time: "T close"
       data_availability_policy: bar_close_derived
@@ -103,7 +103,7 @@ factors:
       formula_id: one_word_board_exclusion_alpha
       formula_version: "1.0"
       pseudocode: "is_one_word_board = open==high==low==close==limit_up_price and volume/avg_volume_20 < threshold"
-      required_fields: [open, high, low, close, limit_up_price, volume]
+      required_fields: [open, high, low, close, limit_up_price, volume, avg_volume_20]
       forbidden_fields: *future_fields
       signal_time: "T close"
       data_availability_policy: bar_close_derived
@@ -145,7 +145,7 @@ factors:
       formula_id: limit_down_liquidity_recovery
       formula_version: "1.0"
       pseudocode: "for prior limit_down: rank(volume_t/avg_volume_20) * rank((close_t/low_t)-1)"
-      required_fields: [low, close, volume, limit_down_price]
+      required_fields: [low, close, volume, avg_volume_20, limit_down_price, prior_limit_state]
       forbidden_fields: *future_fields
       signal_time: "T close"
       data_availability_policy: bar_close_derived
