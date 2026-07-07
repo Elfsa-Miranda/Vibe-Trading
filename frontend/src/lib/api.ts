@@ -190,6 +190,16 @@ export const api = {
   alphaCompareStreamUrl: (jobId: string) =>
     withAuthQuery(`${BASE}/alpha/compare/${encodeURIComponent(jobId)}/stream`),
 
+  // Alpha Foundry read-only API
+  getAlphaFoundryReport: (reportId: string) =>
+    request<AlphaFoundryReportSurface>(`/research/alpha-foundry/reports/${encodeURIComponent(reportId)}`),
+  getAlphaFoundryFactor: (factorId: string) =>
+    request<AlphaFoundryFactorSurface>(`/research/alpha-foundry/factors/${encodeURIComponent(factorId)}`),
+  getAlphaFoundryForwardPlan: (planId: string) =>
+    request<AlphaFoundryForwardPlanSurface>(`/research/alpha-foundry/forward/${encodeURIComponent(planId)}`),
+  getAlphaFoundryTrials: (familyId: string) =>
+    request<AlphaFoundryTrialSurface>(`/research/alpha-foundry/trials/${encodeURIComponent(familyId)}`),
+
   // Connector runtime channel — privileged surface actions (NOT agent tools).
   // commit is the ONLY action that writes a mandate; halt trips the kill switch.
   commitMandate: (body: CommitMandateRequest) =>
@@ -786,6 +796,79 @@ export interface AlphaCompareResult {
   winner: string;
   ranking: AlphaCompareRow[];
   skipped: AlphaCompareSkip[];
+}
+
+// --- Alpha Foundry read-only types ---
+
+export interface AlphaFoundryRule {
+  rule_id: string;
+  error_code: string;
+  explanation: string;
+  evidence_refs?: string[];
+}
+
+export interface AlphaFoundryFactorSurface {
+  factor_id: string;
+  factor_definition_hash: string;
+  proxy_note?: string | null;
+  return_validation: {
+    execution_return: "used_for_tradable_validation" | string;
+    close_return: "diagnostics_only" | string;
+  };
+  falsification_gates?: AlphaFoundryRule[];
+}
+
+export interface AlphaFoundryForwardPlanSurface {
+  plan_id: string;
+  status: string;
+  frozen_config_hash: string;
+  kill_rule_params?: Record<string, unknown>;
+  min_observations_required: number;
+}
+
+export interface AlphaFoundryTrialSurface {
+  family_id: string;
+  trial_count: number;
+  source: "TrialLedger" | string;
+  outcome_counts?: Record<string, number>;
+}
+
+export interface AlphaFoundryResearchCardSurface {
+  conclusion_level: string;
+  hard_failures: string[];
+  trial_count?: number | null;
+  factor_definition_hashes: string[];
+  proxy_notes: string[];
+  uses_execution_return: boolean;
+  has_close_return_diagnostics: boolean;
+}
+
+export interface AlphaFoundryReportSurface {
+  status: string;
+  report: {
+    report_id: string;
+    conclusion_level: string;
+    hard_failures: string[];
+    [key: string]: unknown;
+  };
+  scorecard: {
+    conclusion_level: string;
+    hard_failures: string[];
+    triggered_rules?: AlphaFoundryRule[];
+    [key: string]: unknown;
+  };
+  research_card: AlphaFoundryResearchCardSurface;
+  api_fixture?: { hard_failures: string[]; conclusion_level?: string };
+  ui_fixture?: { hard_failures: string[]; conclusion_level?: string };
+  factor: AlphaFoundryFactorSurface;
+  forward: AlphaFoundryForwardPlanSurface;
+  trials: AlphaFoundryTrialSurface;
+  portfolio_constraints?: {
+    single_name_cap?: string;
+    sector_cap?: string;
+    turnover_cap?: string;
+    adv_cap?: string;
+  };
 }
 
 // --- Connector runtime channel types ---

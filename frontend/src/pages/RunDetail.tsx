@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, type BacktestMetrics, type RunCard, type RunData } from "@/lib/api";
+import type { AlphaFoundryReportSurface } from "@/lib/api";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import { CandlestickChart } from "@/components/charts/CandlestickChart";
@@ -27,6 +28,7 @@ import { MetricsCard } from "@/components/chat/MetricsCard";
 import { ValidationPanel } from "@/components/charts/ValidationPanel";
 import { Skeleton, SkeletonMetrics, SkeletonChart } from "@/components/common/Skeleton";
 import { ErrorBoundary } from "@/components/common/ErrorBoundary";
+import { AlphaFoundryPanel } from "@/components/research/AlphaFoundryPanel";
 
 const rehypePlugins = [rehypeHighlight];
 
@@ -334,6 +336,7 @@ function RunCardTab({ card }: { card: RunCard }) {
   const artifacts = card.artifacts || [];
   const warnings = card.warnings || [];
   const dataSources = card.data_sources || [];
+  const alphaFoundry = card.alpha_foundry as AlphaFoundryReportSurface | undefined;
 
   return (
     <div className="p-4 space-y-4">
@@ -355,6 +358,8 @@ function RunCardTab({ card }: { card: RunCard }) {
           </ul>
         </section>
       )}
+
+      {alphaFoundry && <AlphaFoundryPanel surface={alphaFoundry} />}
 
       <div className="grid gap-4 xl:grid-cols-2">
         <RunCardPanel title={i18n.t("runDetail.backtestSummary")} icon={Database}>
