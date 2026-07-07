@@ -1,0 +1,33 @@
+{
+  "conclusion_level": "invalid",
+  "demo_name": "naive_limit_momentum_trap",
+  "error_codes": [
+    "EXECUTION_RETURN_MISSING"
+  ],
+  "factor_definition_hashes": [
+    "hash-naive_limit_momentum"
+  ],
+  "falsified": true,
+  "metrics": {
+    "placebo_max_rank_ic": null,
+    "rank_ic_after_neutralization": 1.0,
+    "regime_negative_fraction": null,
+    "t_stat_after_neutralization": 999.0
+  },
+  "report_ref": "naive_limit_momentum_trap-report",
+  "research_card_ref": "research-card-naive_limit_momentum_trap-report",
+  "schema_version": "2.1.0",
+  "status": "snapshot_ready",
+  "trial_ledger": {
+    "family_id": "limit_liquidity_microstructure",
+    "outcome_counts": {
+      "rejected": 1
+    },
+    "source": "TrialLedger",
+    "sub_family_id": "naive_limit_momentum",
+    "trial_count": 1
+  },
+  "warnings": [
+    "naive_close_return_rejected_by_tradability_gate"
+  ]
+}

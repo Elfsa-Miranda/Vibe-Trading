@@ -1,0 +1,47 @@
+{
+  "conclusion_level": "research_candidate",
+  "demo_name": "orthogonal_portfolio_increment",
+  "error_codes": [],
+  "factor_definition_hashes": [
+    "hash-orthogonal_breakout_increment"
+  ],
+  "falsified": false,
+  "metrics": {
+    "placebo_max_rank_ic": 0.01,
+    "rank_ic_after_neutralization": 1.0,
+    "regime_negative_fraction": null,
+    "t_stat_after_neutralization": 999.0
+  },
+  "portfolio": {
+    "accepted_incremental_alpha": true,
+    "constraints_tested": {
+      "adv_cap": 0.1,
+      "benchmark_id": "CSI_500_EW",
+      "lot_size": 100,
+      "portfolio_notional": 1000000.0,
+      "schema_version": "2.1.0",
+      "sector_cap": 0.25,
+      "single_name_cap": 0.05,
+      "top_n": 5,
+      "turnover_cap": 0.2
+    },
+    "hard_failures": [],
+    "marginal_ic_after_existing": 0.031,
+    "max_abs_correlation": 0.707107,
+    "risk_model_covariance_psd": true
+  },
+  "report_ref": "orthogonal_portfolio_increment-report",
+  "research_card_ref": "research-card-orthogonal_portfolio_increment-report",
+  "schema_version": "2.1.0",
+  "status": "snapshot_ready",
+  "trial_ledger": {
+    "family_id": "residual_price_volume_behavior",
+    "outcome_counts": {
+      "selected": 1
+    },
+    "source": "TrialLedger",
+    "sub_family_id": "orthogonal_breakout_increment",
+    "trial_count": 1
+  },
+  "warnings": []
+}

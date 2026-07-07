@@ -1,0 +1,37 @@
+{
+  "conclusion_level": "invalid",
+  "demo_name": "public_alpha_crowding_trap",
+  "error_codes": [
+    "NEUTRALIZED_IC_COLLAPSE",
+    "PLACEBO_COMPARABLE",
+    "EOD_PROXY_OVERCLAIM"
+  ],
+  "factor_definition_hashes": [
+    "hash-public_alpha_crowding_proxy"
+  ],
+  "falsified": true,
+  "metrics": {
+    "placebo_max_rank_ic": 0.2,
+    "rank_ic_after_neutralization": 0.0,
+    "regime_negative_fraction": null,
+    "t_stat_after_neutralization": 0.0
+  },
+  "report_ref": "public_alpha_crowding_trap-report",
+  "research_card_ref": "research-card-public_alpha_crowding_trap-report",
+  "schema_version": "2.1.0",
+  "status": "snapshot_ready",
+  "trial_ledger": {
+    "family_id": "residual_price_volume_behavior",
+    "outcome_counts": {
+      "rejected": 1
+    },
+    "source": "TrialLedger",
+    "sub_family_id": "public_alpha_crowding_proxy",
+    "trial_count": 1
+  },
+  "warnings": [
+    "icir_after_neutralization_lt_0.5",
+    "public_analogue_crowding_stress_cap",
+    "weak_neutralized_ic_abs_lt_0.015"
+  ]
+}

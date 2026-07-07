@@ -1,0 +1,41 @@
+{
+  "conclusion_level": "research_candidate",
+  "demo_name": "forward_decay_kill",
+  "error_codes": [],
+  "factor_definition_hashes": [
+    "hash-forward_decay_candidate"
+  ],
+  "falsified": false,
+  "forward_plan": {
+    "frozen_config_hash": "3d236837b851e070049d06706a29430feb357b0a100537227fb781ec2a13e67f",
+    "min_observations_required": 12,
+    "plan_id": "plan-forward-decay"
+  },
+  "forward_reasons": [
+    "consecutive_negative_ic"
+  ],
+  "forward_status": "killed",
+  "metrics": {
+    "placebo_max_rank_ic": null,
+    "rank_ic_after_neutralization": 1.0,
+    "regime_negative_fraction": null,
+    "t_stat_after_neutralization": 999.0
+  },
+  "mutation_error": "forward observations are append-only; update is forbidden",
+  "report_ref": "forward_decay_kill-report",
+  "research_card_ref": "research-card-forward_decay_kill-report",
+  "schema_version": "2.1.0",
+  "status": "snapshot_ready",
+  "trial_ledger": {
+    "family_id": "residual_price_volume_behavior",
+    "outcome_counts": {
+      "selected": 1
+    },
+    "source": "TrialLedger",
+    "sub_family_id": "forward_decay_candidate",
+    "trial_count": 1
+  },
+  "warnings": [
+    "forward_status_killed_by_append_only_observations"
+  ]
+}

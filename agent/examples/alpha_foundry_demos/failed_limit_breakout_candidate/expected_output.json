@@ -1,0 +1,29 @@
+{
+  "conclusion_level": "research_candidate",
+  "demo_name": "failed_limit_breakout_candidate",
+  "error_codes": [],
+  "factor_definition_hashes": [
+    "hash-failed_limit_breakout_reversal"
+  ],
+  "falsified": false,
+  "metrics": {
+    "placebo_max_rank_ic": 0.01,
+    "rank_ic_after_neutralization": 1.0,
+    "regime_negative_fraction": 0.0,
+    "t_stat_after_neutralization": 999.0
+  },
+  "report_ref": "failed_limit_breakout_candidate-report",
+  "research_card_ref": "research-card-failed_limit_breakout_candidate-report",
+  "schema_version": "2.1.0",
+  "status": "snapshot_ready",
+  "trial_ledger": {
+    "family_id": "limit_liquidity_microstructure",
+    "outcome_counts": {
+      "selected": 1
+    },
+    "source": "TrialLedger",
+    "sub_family_id": "failed_limit_breakout_reversal",
+    "trial_count": 1
+  },
+  "warnings": []
+}
