@@ -52,6 +52,7 @@ data/backup/
 
 # Internal docs (plans, specs)
 docs/*
+!docs/irr-agl-retirement-*.md
 !docs/sre-recovery/
 !docs/sre-recovery/**
 !wiki/docs/
