@@ -40,10 +40,13 @@ def make_factor_output_frame() -> pd.DataFrame:
         {
             "date": pd.to_datetime(["2026-01-05", "2026-01-05"]),
             "symbol": ["000001.SZ", "000002.SZ"],
-            "factor_value": [0.4, -0.2],
             "factor_id": ["limit_lock_strength", "limit_lock_strength"],
+            "factor_value": [0.4, -0.2],
             "as_of": pd.to_datetime(["2026-01-05 15:00:00", "2026-01-05 15:00:00"]),
+            "signal_time": ["T close", "T close"],
             "available_at": pd.to_datetime(["2026-01-05 15:00:00", "2026-01-05 15:00:00"]),
+            "data_availability_policy": ["bar_close_derived", "bar_close_derived"],
+            "factor_definition_hash": ["hash-limit-lock-strength", "hash-limit-lock-strength"],
         }
     )
 

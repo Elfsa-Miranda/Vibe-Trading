@@ -45,6 +45,17 @@ def test_factor_output_frame_requires_range_index() -> None:
 def test_factor_output_frame_has_only_clean_columns() -> None:
     frame = validate_factor_output_frame(make_factor_output_frame())
 
+    assert list(frame.columns) == [
+        "date",
+        "symbol",
+        "factor_id",
+        "factor_value",
+        "as_of",
+        "signal_time",
+        "available_at",
+        "data_availability_policy",
+        "factor_definition_hash",
+    ]
     assert list(frame.columns) == FACTOR_OUTPUT_COLUMNS
 
 

@@ -10,7 +10,11 @@ from pydantic import BaseModel, ConfigDict
 
 from src.alpha_foundry.common.errors import ConclusionLevel
 from src.alpha_foundry.factors.base import FactorSpec, factor_definition_hash, load_factor_specs
-from src.alpha_foundry.panels.interfaces import FACTOR_OUTPUT_COLUMNS, validate_factor_output_frame
+from src.alpha_foundry.panels.interfaces import (
+    FACTOR_OUTPUT_COLUMNS,
+    FORBIDDEN_FACTOR_OUTPUT_COLUMNS,
+    validate_factor_output_frame,
+)
 from src.alpha_foundry.panels.tradability import build_tradability_mask
 
 
@@ -139,7 +143,9 @@ def _prepare_input_frame(frame: pd.DataFrame, spec: FactorSpec) -> pd.DataFrame:
     forbidden = [
         col
         for col in frame.columns
-        if col in spec.formula.forbidden_fields or col.startswith("future_")
+        if col in spec.formula.forbidden_fields
+        or col in FORBIDDEN_FACTOR_OUTPUT_COLUMNS
+        or col.startswith("future_")
     ]
     if forbidden:
         raise FactorInputFrameError(f"factor input contains forbidden columns: {forbidden}")
@@ -308,10 +314,13 @@ def _build_factor_output(
         {
             "date": frame["date"].dt.normalize(),
             "symbol": frame["symbol"],
-            "factor_value": factor_value.astype(float),
             "factor_id": factor_id,
+            "factor_value": factor_value.astype(float),
             "as_of": as_of_values,
+            "signal_time": _get_spec(factor_id).formula.signal_time,
             "available_at": available_at_values,
+            "data_availability_policy": _get_spec(factor_id).formula.data_availability_policy,
+            "factor_definition_hash": factor_definition_hash(_get_spec(factor_id)),
         }
     )
     return validate_factor_output_frame(output.loc[:, FACTOR_OUTPUT_COLUMNS].reset_index(drop=True))

@@ -16,10 +16,13 @@ def _factor_frame(values: list[float]) -> pd.DataFrame:
         {
             "date": pd.Timestamp("2026-01-05"),
             "symbol": symbols,
-            "factor_value": values,
             "factor_id": "residual_20d_momentum",
+            "factor_value": values,
             "as_of": pd.Timestamp("2026-01-05 15:00:00"),
+            "signal_time": "T close",
             "available_at": pd.Timestamp("2026-01-05 15:00:00"),
+            "data_availability_policy": "bar_close_derived",
+            "factor_definition_hash": "hash-residual-20d-momentum",
         }
     )
 

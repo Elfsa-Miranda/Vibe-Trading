@@ -13,10 +13,13 @@ def _factor_frame(values: list[float], *, factor_id: str = "test_factor") -> pd.
         {
             "date": pd.Timestamp("2026-01-05"),
             "symbol": symbols,
-            "factor_value": values,
             "factor_id": factor_id,
+            "factor_value": values,
             "as_of": pd.Timestamp("2026-01-05 15:00:00"),
+            "signal_time": "T close",
             "available_at": pd.Timestamp("2026-01-05 15:00:00"),
+            "data_availability_policy": "bar_close_derived",
+            "factor_definition_hash": f"hash-{factor_id}",
         }
     )
 

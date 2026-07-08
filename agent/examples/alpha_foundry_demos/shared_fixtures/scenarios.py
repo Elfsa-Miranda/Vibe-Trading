@@ -458,10 +458,13 @@ def factor_return_fixture(
                 {
                     "date": day,
                     "symbol": symbol,
-                    "factor_value": factor_value,
                     "factor_id": factor_id,
+                    "factor_value": factor_value,
                     "as_of": day + pd.Timedelta(hours=15),
+                    "signal_time": "T close",
                     "available_at": day + pd.Timedelta(hours=15),
+                    "data_availability_policy": "bar_close_derived",
+                    "factor_definition_hash": f"hash-{factor_id}",
                 }
             )
             return_rows.append({"date": day, "symbol": symbol, return_column: return_value})

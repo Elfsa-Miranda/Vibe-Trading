@@ -5,7 +5,17 @@ from __future__ import annotations
 import pandas as pd
 
 
-FACTOR_OUTPUT_COLUMNS = ["date", "symbol", "factor_value", "factor_id", "as_of", "available_at"]
+FACTOR_OUTPUT_COLUMNS = [
+    "date",
+    "symbol",
+    "factor_id",
+    "factor_value",
+    "as_of",
+    "signal_time",
+    "available_at",
+    "data_availability_policy",
+    "factor_definition_hash",
+]
 FORBIDDEN_FACTOR_OUTPUT_COLUMNS = {
     "forward_return",
     "execution_return",
