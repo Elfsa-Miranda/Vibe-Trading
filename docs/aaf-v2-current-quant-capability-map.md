@@ -13,18 +13,19 @@ main-based Alpha Foundry branch.
 | Backtest engines | `agent/backtest/engines/china_a.py` plus global/futures/crypto engines | China A engine already captures no shorting, T+1 sell block, price limits, lot size and fees at a basic execution-rule level. |
 | Data loaders | BaoStock, Tencent, Tushare, Akshare, Eastmoney, Sina, local and others | Useful source adapters exist, but Phase 0 does not prove PIT `available_at` for financial statements. |
 | Tests | 13 factor tests and 20 loader/backtest engine tests in tracked main branch | Good smoke foundation; Alpha Foundry-specific contracts are absent before this phase. |
-| Reliability | `agent/src/reliability/artifacts`, redaction and schema helpers | Artifact store is present and should be referenced by later Alpha Foundry reports. |
+| Reliability | `agent/src/reliability/artifacts`, redaction and schema helpers | Artifact store is present, but Alpha Foundry must not depend on global reliability integration for the first upstream slice. |
 
-## Wrap Without Public Interface Changes
+## Extend Without Public Interface Changes
 
-The following can be wrapped in later phases without changing public signatures:
+The following can be consumed through explicit, opt-in, local adapters without
+changing public signatures or replacing runtime objects:
 
 - `BaseTool.execute(**kwargs) -> str`: Alpha Foundry must not alter this.
-- `ToolRegistry.execute(name, params) -> str`: later governance wrapping must be
-  outside this public contract.
+- `ToolRegistry.execute(name, params) -> str`: Alpha Foundry must not insert a
+  default policy layer into this execution path.
 - `DataLoaderProtocol.fetch(codes, start_date, end_date, interval="1D", fields=None) -> dict[str, DataFrame]`:
-  FactorPanel construction should consume loader output and add PIT/tradability
-  contracts around it.
+  FactorPanel construction should consume loader output in explicit calls and
+  create local PIT/tradability reports.
 - `Registry.compute(alpha_id, panel) -> pd.DataFrame`: legacy Alpha Zoo can stay
   as a source of comparison/placebo candidates, not as the Alpha Foundry truth
   model.
@@ -43,7 +44,7 @@ The following can be wrapped in later phases without changing public signatures:
 | No AAF falsification engine | IC, neutralization, placebo, regime and cost gates are not deterministic. | Phase 6 |
 | No AAF portfolio/risk model report | Portfolio candidate claims would lack benchmark, PSD covariance and constraints. | Phase 8 |
 | No forward append-only tracking store | Paper tracking can be retroactively edited. | Phase 9 |
-| No AAF scorecard/card exact-match gate | Hard failures could drift across card/API/UI. | Phase 10-11 |
+| No local report exact-match gate | Hard failures could drift between local JSON and Markdown report artifacts. | Deferred until after diagnostics |
 
 ## Current Test Smoke State
 
@@ -70,6 +71,6 @@ pytest agent/tests/alpha_foundry/test_alpha_foundry_inventory_smoke.py -q
 - No real market network, broker or LLM call is made.
 - Existing China A execution rules are useful but not sufficient for the
   Phase 2 tradability mask or Phase 6 execution-return validation.
-- Current tracked main branch does not contain a complete IRR-AGL scorecard,
-  governance, ClaimSet or Research Card implementation; later phases must add
-  or integrate them incrementally.
+- First upstream slices should avoid global Research Card, scorecard, API/UI,
+  and reliability policy integration. Those can be proposed later after the
+  pure Alpha Foundry package is accepted.

@@ -27,11 +27,19 @@ This document records intentional limits and non-goals for the hardened Alpha Fo
 - Observations are append-only JSONL-style records by default. Update/delete mutation is intentionally rejected.
 - Kill rules are deterministic and conservative; they do not replace committee or mandate review.
 
-## API And UI Limits
+## API, UI, And Report Limits
 
-- Alpha Foundry API additions are read-only.
-- Frontend panels are incremental RunDetail additions and depend on API fixtures/contracts.
-- UI consistency tests cover displayed Alpha Foundry evidence, claims, decisions, and hard failures, but do not replace end-to-end production monitoring.
+- Alpha Foundry API additions are read-only and opt-in.
+- `VIBE_TRADING_ALPHA_FOUNDRY_MODE` defaults to `off`; `warn` is not the
+  default and must not alter legacy run payloads.
+- API route mounting requires both an enabled mode and
+  `VIBE_TRADING_ALPHA_FOUNDRY_ENABLE_API=1`.
+- Frontend panels, Research Card sections, scorecard bridges, and reliability
+  policy integration are deferred from the first upstream PRs.
+- Local report output should be produced by explicit CLI/function/test calls,
+  not by default legacy backtest or session paths.
+- UI consistency tests cover fixture surfaces only; they do not replace
+  end-to-end production monitoring.
 
 ## Security Limits
 

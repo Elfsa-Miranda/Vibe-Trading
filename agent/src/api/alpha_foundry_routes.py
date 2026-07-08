@@ -2,25 +2,31 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any, Awaitable, Callable
 
 from fastapi import Depends, FastAPI, HTTPException
 
-from src.alpha_foundry.common.errors import HardFailureCode
-from src.alpha_foundry.reports.builder import build_alpha_foundry_report, make_factor_candidate_card
-from src.reliability.quant.methodology_facts import AlphaFoundryMethodologyFacts
-from src.reliability.quant.scorecard_policy import (
-    AlphaFoundryClaim,
-    AlphaFoundryClaimSet,
-    evaluate_alpha_foundry_scorecard,
-)
-from src.research_card.builder import (
-    build_alpha_foundry_card_consistency_fixture,
-    build_alpha_foundry_research_card,
-)
-
-
 AuthDep = Callable[..., Awaitable[Any] | Any]
+ALPHA_FOUNDRY_MODE_ENV = "VIBE_TRADING_ALPHA_FOUNDRY_MODE"
+ALPHA_FOUNDRY_ENABLE_API_ENV = "VIBE_TRADING_ALPHA_FOUNDRY_ENABLE_API"
+VALID_ALPHA_FOUNDRY_MODES = frozenset({"off", "observe", "warn", "enforce"})
+
+
+def alpha_foundry_mode() -> str:
+    """Return the explicit Alpha Foundry mode.
+
+    Default is ``off`` so legacy API/session/backtest paths do not gain report
+    sections, warnings, or routes unless an operator opts in.
+    """
+    mode = os.getenv(ALPHA_FOUNDRY_MODE_ENV, "off").strip().lower() or "off"
+    return mode if mode in VALID_ALPHA_FOUNDRY_MODES else "off"
+
+
+def alpha_foundry_api_enabled() -> bool:
+    """Return whether the fixture-backed Alpha Foundry API should be mounted."""
+    enabled = os.getenv(ALPHA_FOUNDRY_ENABLE_API_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+    return enabled and alpha_foundry_mode() != "off"
 
 
 def register_alpha_foundry_routes(app: FastAPI, require_auth: AuthDep | None = None) -> None:
@@ -59,6 +65,19 @@ def register_alpha_foundry_routes(app: FastAPI, require_auth: AuthDep | None = N
 
 
 def _fixture_surface() -> dict[str, Any]:
+    from src.alpha_foundry.common.errors import HardFailureCode
+    from src.alpha_foundry.reports.builder import build_alpha_foundry_report, make_factor_candidate_card
+    from src.reliability.quant.methodology_facts import AlphaFoundryMethodologyFacts
+    from src.reliability.quant.scorecard_policy import (
+        AlphaFoundryClaim,
+        AlphaFoundryClaimSet,
+        evaluate_alpha_foundry_scorecard,
+    )
+    from src.research_card.builder import (
+        build_alpha_foundry_card_consistency_fixture,
+        build_alpha_foundry_research_card,
+    )
+
     factor_id = "limit_queue_pressure_proxy"
     proxy_note = "EOD proxy only; no Level-2 queue alpha claim."
     card = make_factor_candidate_card(

@@ -51,7 +51,9 @@ data/parquet/
 data/backup/
 
 # Internal docs (plans, specs)
-docs/
+docs/*
+!docs/sre-recovery/
+!docs/sre-recovery/**
 !wiki/docs/
 !wiki/docs/**
 docs/screenshots/agent-run.png

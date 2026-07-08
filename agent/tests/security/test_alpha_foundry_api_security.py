@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import importlib
+
 from fastapi.testclient import TestClient
+import pytest
 
 import api_server
 
@@ -22,12 +25,19 @@ TRAVERSAL_PAYLOADS = [
 ]
 
 
-def _client() -> TestClient:
-    return TestClient(api_server.app, client=("127.0.0.1", 50000))
+@pytest.fixture
+def alpha_foundry_api_client(monkeypatch) -> TestClient:
+    monkeypatch.setenv("VIBE_TRADING_ALPHA_FOUNDRY_MODE", "observe")
+    monkeypatch.setenv("VIBE_TRADING_ALPHA_FOUNDRY_ENABLE_API", "1")
+    module = importlib.reload(api_server)
+    yield TestClient(module.app, client=("127.0.0.1", 50000))
+    monkeypatch.delenv("VIBE_TRADING_ALPHA_FOUNDRY_MODE", raising=False)
+    monkeypatch.delenv("VIBE_TRADING_ALPHA_FOUNDRY_ENABLE_API", raising=False)
+    importlib.reload(api_server)
 
 
-def test_alpha_foundry_routes_reject_write_methods_without_state_change() -> None:
-    client = _client()
+def test_alpha_foundry_routes_reject_write_methods_without_state_change(alpha_foundry_api_client) -> None:
+    client = alpha_foundry_api_client
     before = client.get("/research/alpha-foundry/trials/limit_liquidity").json()
 
     for path in ALPHA_FOUNDRY_PATHS:
@@ -41,8 +51,8 @@ def test_alpha_foundry_routes_reject_write_methods_without_state_change() -> Non
     assert after == before
 
 
-def test_alpha_foundry_path_traversal_returns_safe_not_found() -> None:
-    client = _client()
+def test_alpha_foundry_path_traversal_returns_safe_not_found(alpha_foundry_api_client) -> None:
+    client = alpha_foundry_api_client
 
     for payload in TRAVERSAL_PAYLOADS:
         response = client.get(f"/research/alpha-foundry/reports/{payload}")

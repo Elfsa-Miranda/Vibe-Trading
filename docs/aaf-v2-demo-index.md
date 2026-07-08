@@ -1,6 +1,9 @@
 # A-Share Alpha Foundry v2.1 Demo Index
 
-Each demo is deterministic, dry-run capable, and compares computed output against `expected_output.json`. The runners call shared production builders and do not directly hand-write final cards or scorecards.
+Each demo is deterministic, dry-run capable, and compares computed output against
+`expected_output.json`. The runners call explicit Alpha Foundry builders and do
+not attach reports, warnings, Research Card sections, scorecards, API routes, or
+UI panels to legacy paths by default.
 
 ## Naive Limit Momentum Trap
 

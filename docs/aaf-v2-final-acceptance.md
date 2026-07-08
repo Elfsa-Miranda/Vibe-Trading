@@ -2,9 +2,14 @@
 
 Date: 2026-07-08
 
-This package completes the A-Share Alpha Foundry under IRR-AGL v2.1 hardened phase set through deterministic demos, read-only surfaces, scorecard/research-card integration, and regression coverage.
+This document records local integration verification for the Alpha Foundry work.
+It is not an upstream landing plan. Upstream review should be split into small,
+opt-in PRs, starting with docs/inventory, pure schemas/fixtures, tradability
+masks, one factor family, and diagnostics.
 
 ## Scope Closed
+
+The following was verified locally as a bounded research package:
 
 - Mechanism hypothesis registry with deterministic formula specs and PIT availability metadata.
 - PIT-safe `FactorOutputFrame` contract with the exact nine v2.1 allowed columns.
@@ -14,8 +19,21 @@ This package completes the A-Share Alpha Foundry under IRR-AGL v2.1 hardened pha
 - Multiple-testing disclosure driven by TrialLedger counts and family statistics.
 - Orthogonal alpha combination and constrained portfolio MVP with PSD risk model and constraint checks.
 - Forward paper tracking with frozen plan hashes and append-only observations.
-- Scorecard, Research Card, MethodologyFactSet, read-only API, frontend fixture panels, and evidence closure integration.
+- Local report builders and deterministic JSON/Markdown artifacts.
 - Five deterministic demo traps/candidates that call production builders and compare dry-run output against snapshots.
+
+## Runtime Boundary
+
+- `VIBE_TRADING_ALPHA_FOUNDRY_MODE` defaults to `off`.
+- `observe`, `warn`, and `enforce` do not attach Alpha Foundry to legacy
+  backtest, session, registry, Research Card, scorecard, API, or UI paths.
+- The fixture-backed API is absent unless both
+  `VIBE_TRADING_ALPHA_FOUNDRY_MODE != off` and
+  `VIBE_TRADING_ALPHA_FOUNDRY_ENABLE_API=1` are set.
+- Legacy Alpha Zoo/backtest/session outputs must not gain default report/card
+  sections, warnings, adapters, or artifacts.
+- Global Research Card, scorecard policy, reliability, API/UI, performance,
+  demo, and migration surfaces are deferred from the first upstream PRs.
 
 ## Phase 12 Demo Acceptance
 
@@ -70,8 +88,9 @@ The warnings are pre-existing framework/dependency warnings and factor `pct_chan
 ## Safety And Evidence Checks
 
 - No write API was added for Alpha Foundry; Phase 11 routes are read-only.
+- Alpha Foundry API routes are opt-in and are not mounted by default.
 - No live trading capability was expanded.
-- No LLM path can upgrade conclusion level, hard failures, or research-card gates.
+- No LLM path can upgrade conclusion level or hard failures.
 - EOD-only limit queue proxy demos remain exploratory and carry proxy/crowding warnings.
 - Best-trial-only reporting is rejected; TrialLedger count and selected trial metadata are disclosed.
 - Forward observations are append-only; no public update/delete mutation API is exposed.
@@ -87,4 +106,8 @@ git check-ignore -v -- AGENTS.MD execplan.md
 
 ## Acceptance Statement
 
-The current implementation satisfies the A-Share Alpha Foundry v2.1 hardened phase acceptance in a deterministic, testable, and rollback-friendly form. The portfolio layer remains an MVP constrained optimizer, and forward tracking remains paper-only; neither is represented as production trading infrastructure.
+The local implementation satisfies deterministic Alpha Foundry research
+verification in a testable and rollback-friendly form. For upstream, this must
+be treated as a sequence of small opt-in PRs, not a single full-stack landing.
+The portfolio layer remains an MVP constrained optimizer, and forward tracking
+remains paper-only; neither is represented as production trading infrastructure.

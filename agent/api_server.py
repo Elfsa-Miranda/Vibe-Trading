@@ -993,8 +993,10 @@ from src.api.live_routes import (  # noqa: F401, E402
 from src.api.alpha_routes import register_alpha_routes  # noqa: E402
 register_alpha_routes(app)
 
-from src.api.alpha_foundry_routes import register_alpha_foundry_routes  # noqa: E402
-register_alpha_foundry_routes(app, require_auth=require_auth)
+from src.api.alpha_foundry_routes import alpha_foundry_api_enabled, register_alpha_foundry_routes  # noqa: E402
+
+if alpha_foundry_api_enabled():
+    register_alpha_foundry_routes(app, require_auth=require_auth)
 
 
 # ============================================================================

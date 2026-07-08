@@ -15,7 +15,7 @@ A-share mechanism hypothesis
 -> constrained portfolio
 -> execution and capacity simulation
 -> forward paper tracking
--> scorecard / Research Card / evidence closure
+-> local alpha_foundry report artifact
 ```
 
 This is not a broad Agent expansion and not an Alpha Zoo refresh. The product of
@@ -34,30 +34,59 @@ market rules are hard to fake safely:
 - Suspensions, ST status, new-stock filters, one-word boards, lot size, fees and
   capacity all create places where naive backtests overstate tradability.
 - Existing code already contains China A backtest and loader surfaces, so the
-  next work can wrap current interfaces instead of inventing a parallel stack.
+  next work can extend through explicit, opt-in, local adapters instead of
+  replacing runtime objects.
 
-## IRR-AGL Role
+## Upstream Integration Boundary
 
-IRR-AGL remains the evidence and gate infrastructure. Alpha Foundry produces
-research objects; IRR-AGL keeps those objects auditable.
+Alpha Foundry must land as a pure research package first. It must not change
+legacy backtest, session, registry, Research Card, scorecard, API, or UI paths
+unless a caller explicitly opts in.
 
-Required references for later Alpha Foundry outputs:
+Default operational posture:
 
-- artifact refs for factor specs, falsification reports, portfolio reports,
-  forward plans and Research Cards;
-- ClaimSet refs for alpha, tradable, generalization, novelty, portfolio and
-  paper-tracking claims;
-- MethodologyFactSet refs for PIT, tradability, TrialLedger, neutralization,
-  risk model and forward-plan facts;
-- ScorecardPolicy triggered rules with deterministic hard failure codes;
-- evidence closure refs proving card/API/UI consistency.
+- `VIBE_TRADING_ALPHA_FOUNDRY_MODE` defaults to `off`.
+- `observe`, `warn`, and `enforce` are not enough to attach Alpha Foundry to a
+  legacy path.
+- API exposure also requires `VIBE_TRADING_ALPHA_FOUNDRY_ENABLE_API=1`.
+- No default Research Card section, scorecard bridge, API route, UI panel,
+  report adapter, warning, or artifact may be added to an existing legacy run.
+
+Accepted first landing surfaces:
+
+- `agent/src/alpha_foundry/reports/model.py`
+- `agent/src/alpha_foundry/reports/render_markdown.py`
+- deterministic fixtures
+- local JSON/Markdown artifacts created only by explicit CLI/function/test calls
+
+Deferred integration surfaces:
+
+- `agent/src/reliability/quant/methodology_facts.py`
+- `agent/src/reliability/quant/scorecard_policy.py`
+- `agent/src/research_card/builder.py`
+- `agent/src/research_card/render_markdown.py`
+- global API/UI exposure
 
 Current tracked code on the main-based branch has reliability artifact store
 and redaction primitives, but not the full v2.1 Alpha Foundry contracts. Later
 phases must add those contracts incrementally without changing public
 interfaces.
 
-## In Scope
+## Upstream PR Slice
+
+Do not submit AAF-IRR v2.1 as one full-stack PR. Slice by reviewable boundary:
+
+1. A-share alpha_foundry docs and inventory only.
+2. Pure schema plus deterministic fixtures.
+3. Tradability masks.
+4. One factor family with tests.
+5. Diagnostics only.
+
+Portfolio, forward tracking, Research Card, scorecard, API/UI, performance,
+demos, and migration stay out of the first upstream sequence until maintainers
+accept the core package boundary.
+
+## Research Scope
 
 - `limit_liquidity_microstructure`: limit locks, failed breakouts, one-word
   boards, limit gaps and liquidity recovery.
