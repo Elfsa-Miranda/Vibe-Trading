@@ -13,12 +13,19 @@
   - future-data input leakage.
   - forward JSONL tamper/path weaknesses.
   - markdown XSS/secret leakage.
+- This final red-team pass found and fixed additional blocking gaps:
+  - Forward store public update/delete mutation API exposure.
+  - Queue proxy availability policy too weak for no-Level-2 execution.
+  - Single selected best-trial disclosure missing BEST_TRIAL_ONLY.
+  - Placebo controls lacking deterministic label-permutation support.
+  - Full-suite performance smoke instability in the falsification hot path.
 - Security test coverage was added where the security directory previously had no active Alpha Foundry source tests.
 - Final commands pass:
-  - Alpha Foundry: `99 passed`
-  - Security: `10 passed`
-  - Red-team selector: `154 passed`
-  - Old behavior regression: `4772 passed, 6 skipped`
+  - Alpha Foundry: `101 passed`
+  - Security: `13 passed`
+  - Red-team selector: `157 passed`
+  - Old behavior regression: `4775 passed, 6 skipped`
+  - Performance smoke: `2 passed`
   - Frontend vitest/build: passed
   - Five demos: `snapshot_match`
 

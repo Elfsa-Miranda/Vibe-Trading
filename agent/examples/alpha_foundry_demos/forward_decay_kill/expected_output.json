@@ -21,7 +21,7 @@
     "regime_negative_fraction": null,
     "t_stat_after_neutralization": 999.0
   },
-  "mutation_error": "forward observations are append-only; update is forbidden",
+  "mutation_error": "duplicate observation_id rejected",
   "report_ref": "forward_decay_kill-report",
   "research_card_ref": "research-card-forward_decay_kill-report",
   "schema_version": "2.1.0",

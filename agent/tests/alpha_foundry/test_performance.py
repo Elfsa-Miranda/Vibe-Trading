@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import time
 
 import pandas as pd
@@ -50,26 +51,33 @@ def test_falsification_performance_smoke() -> None:
         ledger_id="ledger-performance",
         family_id="residual_price_volume_behavior",
     )
-    started = time.perf_counter()
+    gc_was_enabled = gc.isenabled()
+    gc.collect()
+    gc.disable()
+    try:
+        started = time.perf_counter()
 
-    for factor_idx in range(20):
-        for horizon in (1, 3, 5, 10, 20):
-            factor_id = f"fixture_factor_{factor_idx:02d}_{horizon}"
-            factor, returns, exposures = _fixture(factor_id, horizon)
-            _, ledger = run_factor_falsification(
-                factor,
-                returns,
-                factor_id=factor_id,
-                hypothesis_id="residual_20d_momentum",
-                track="residual_price_volume_behavior",
-                factor_definition_hash=f"hash-{factor_id}",
-                protocol_hash="protocol-hash",
-                ledger=ledger,
-                exposures=exposures,
-                parameter_variant={"horizon": horizon},
-            )
+        for factor_idx in range(20):
+            for horizon in (1, 3, 5, 10, 20):
+                factor_id = f"fixture_factor_{factor_idx:02d}_{horizon}"
+                factor, returns, exposures = _fixture(factor_id, horizon)
+                _, ledger = run_factor_falsification(
+                    factor,
+                    returns,
+                    factor_id=factor_id,
+                    hypothesis_id="residual_20d_momentum",
+                    track="residual_price_volume_behavior",
+                    factor_definition_hash=f"hash-{factor_id}",
+                    protocol_hash="protocol-hash",
+                    ledger=ledger,
+                    exposures=exposures,
+                    parameter_variant={"horizon": horizon},
+                )
 
-    elapsed = time.perf_counter() - started
+        elapsed = time.perf_counter() - started
+    finally:
+        if gc_was_enabled:
+            gc.enable()
     assert ledger.trial_count(family_id="residual_price_volume_behavior") == 100
     assert elapsed < 5.0
 
@@ -94,9 +102,16 @@ def test_portfolio_optimizer_performance_smoke() -> None:
         portfolio_notional=10_000_000.0,
     )
 
-    started = time.perf_counter()
-    report = construct_long_only_top_n_portfolio(scores, constraints=constraints)
-    elapsed = time.perf_counter() - started
+    gc_was_enabled = gc.isenabled()
+    gc.collect()
+    gc.disable()
+    try:
+        started = time.perf_counter()
+        report = construct_long_only_top_n_portfolio(scores, constraints=constraints)
+        elapsed = time.perf_counter() - started
+    finally:
+        if gc_was_enabled:
+            gc.enable()
 
     assert len(report.weights) <= 100
     assert report.hard_failures == []

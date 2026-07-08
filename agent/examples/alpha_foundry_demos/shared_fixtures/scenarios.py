@@ -249,7 +249,7 @@ def build_forward_decay_kill() -> dict[str, Any]:
             )
             observations.append(store.append(observation))
         try:
-            store.update(observations[0])
+            store.append(observations[0])
         except ForwardStoreMutationError as exc:
             mutation_error = str(exc)
     status = evaluate_forward_status(plan, observations)

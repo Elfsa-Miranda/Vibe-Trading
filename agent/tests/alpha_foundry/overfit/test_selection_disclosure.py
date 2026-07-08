@@ -64,6 +64,20 @@ def test_high_trial_count_without_selection_policy_fails() -> None:
     assert HardFailureCode.MULTIPLE_TESTING_NOT_DISCLOSED in report.hard_failures
 
 
+def test_single_selected_trial_without_selection_policy_is_best_trial_only() -> None:
+    report = build_multiple_testing_report(
+        _ledger(1),
+        family_id="limit_liquidity_microstructure",
+        sub_family_id="failed_limit_breakout_reversal",
+        selected_trial_id="trial-0",
+        selected_metric="rank_ic_after_neutralization",
+        strong_result_claim=True,
+    )
+
+    assert report.trial_count == 1
+    assert HardFailureCode.BEST_TRIAL_ONLY in report.hard_failures
+
+
 def test_selection_policy_satisfies_disclosure_gate() -> None:
     report = build_multiple_testing_report(
         _ledger(3),

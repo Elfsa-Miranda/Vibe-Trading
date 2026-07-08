@@ -169,7 +169,7 @@ factors:
       required_fields: [close, limit_up_price, volume, avg_volume_20]
       forbidden_fields: *future_fields
       signal_time: "T close"
-      data_availability_policy: bar_close_derived
+      data_availability_policy: fixture_only
       proxy_note: "Without Level-2/tick/queue data this is only an exploratory EOD proxy and cannot claim queue alpha."
       formula_hash: "limit-queue-pressure-proxy-eod-v1"
     transform_pipeline: *common_transform

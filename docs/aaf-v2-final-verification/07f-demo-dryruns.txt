@@ -1,0 +1,16 @@
+﻿Alpha Foundry demo dry-runs
+
+python agent/examples/alpha_foundry_demos/naive_limit_momentum_trap/runner.py --dry-run
+snapshot_match naive_limit_momentum_trap
+
+python agent/examples/alpha_foundry_demos/failed_limit_breakout_candidate/runner.py --dry-run
+snapshot_match failed_limit_breakout_candidate
+
+python agent/examples/alpha_foundry_demos/public_alpha_crowding_trap/runner.py --dry-run
+snapshot_match public_alpha_crowding_trap
+
+python agent/examples/alpha_foundry_demos/orthogonal_portfolio_increment/runner.py --dry-run
+snapshot_match orthogonal_portfolio_increment
+
+python agent/examples/alpha_foundry_demos/forward_decay_kill/runner.py --dry-run
+snapshot_match forward_decay_kill

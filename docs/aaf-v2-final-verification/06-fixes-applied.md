@@ -49,3 +49,19 @@
   - `agent/tests/security/test_alpha_foundry_secret_redaction.py`
   - `agent/tests/alpha_foundry/redteam/test_future_data_leakage.py`
 - GREEN evidence: `pytest agent/tests/security -q`; `pytest agent/tests/ -k "security or redteam or attack" -q`.
+
+## FOG-006 Final Red-Team Hardening
+
+- Files changed:
+  - `agent/src/alpha_foundry/forward/store.py`
+  - `agent/src/alpha_foundry/factors/limit_liquidity.py`
+  - `agent/src/alpha_foundry/factors/specs/limit_liquidity_specs.yaml`
+  - `agent/src/alpha_foundry/overfit/multiple_testing.py`
+  - `agent/src/alpha_foundry/diagnostics/controls.py`
+  - `agent/src/alpha_foundry/diagnostics/ic.py`
+  - `agent/src/alpha_foundry/diagnostics/neutralization.py`
+  - `agent/tests/security/test_alpha_foundry_attack_surface.py`
+  - `agent/tests/alpha_foundry/diagnostics/test_controls.py`
+- Change: removed public forward mutation APIs, normalized forward paths, tightened queue proxy availability policy, hard-failed single selected best-trial disclosure, added deterministic permutation controls, and stabilized falsification performance.
+- RED evidence: new red-team tests failed on the prior implementation; full Alpha Foundry initially failed performance smoke under suite context.
+- GREEN evidence: split evidence files `07a` through `07j`; release summary `07-final-summary.txt`.

@@ -35,9 +35,12 @@ def test_forward_store_appends_jsonl_and_chains_hashes(tmp_path) -> None:
     assert second.observation_hash == observations[1].observation_hash
 
 
-def test_forward_store_rejects_update_delete_and_out_of_order_append(tmp_path) -> None:
+def test_forward_store_exposes_no_update_delete_api_and_rejects_out_of_order_append(tmp_path) -> None:
+    assert "update" not in ForwardObservationJsonlStore.__dict__
+    assert "delete" not in ForwardObservationJsonlStore.__dict__
+
     store = ForwardObservationJsonlStore(tmp_path / "forward.jsonl")
-    first = store.append(
+    store.append(
         create_forward_observation(
             observation_id="obs-1",
             plan_id="plan-1",
@@ -54,10 +57,6 @@ def test_forward_store_rejects_update_delete_and_out_of_order_append(tmp_path) -
         realized_rank_ic=0.01,
     )
 
-    with pytest.raises(ForwardStoreMutationError):
-        store.update(first)
-    with pytest.raises(ForwardStoreMutationError):
-        store.delete("obs-1")
     with pytest.raises(ForwardStoreMutationError):
         store.append(out_of_order)
 

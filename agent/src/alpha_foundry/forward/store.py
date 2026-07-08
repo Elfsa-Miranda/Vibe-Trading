@@ -11,7 +11,7 @@ from src.alpha_foundry.forward.model import ForwardObservation, with_previous_ha
 
 
 class ForwardStoreMutationError(ValueError):
-    """Raised for forbidden update/delete/out-of-order mutations."""
+    """Raised for forbidden forward-store mutations."""
 
 
 class ForwardObservationJsonlStore:
@@ -61,23 +61,18 @@ class ForwardObservationJsonlStore:
             observations.append(observation)
         return observations
 
-    def update(self, observation: ForwardObservation) -> None:
-        raise ForwardStoreMutationError("forward observations are append-only; update is forbidden")
-
-    def delete(self, observation_id: str) -> None:
-        raise ForwardStoreMutationError("forward observations are append-only; delete is forbidden")
-
 
 def _validate_store_path(path: Path) -> Path:
     raw = str(path)
     if "://" in raw or any(part == ".." for part in path.parts):
         raise ForwardStoreMutationError("path traversal forward store path rejected")
-    if path.exists() and path.is_symlink():
+    expanded = path.expanduser()
+    if expanded.exists() and expanded.is_symlink():
         raise ForwardStoreMutationError("symlink forward store path rejected")
-    for parent in path.parents:
+    for parent in expanded.parents:
         if parent.exists() and parent.is_symlink():
             raise ForwardStoreMutationError("symlink forward store parent rejected")
-    return path
+    return expanded.resolve(strict=False)
 
 
 def _validate_observation_hash(observation: ForwardObservation) -> None:

@@ -1,0 +1,361 @@
+﻿cd frontend; npx vitest run --reporter=verbose
+
+ RUN  v4.1.8 D:/Vibe-Trading/frontend
+
+ ' src/components/chat/__tests__/SwarmStatusCard.test.tsx > SwarmStatusCard > renders agent status rows 17ms
+ ' src/components/chat/__tests__/SwarmStatusCard.test.tsx > SwarmStatusCard > shows empty state while waiting for events 2ms
+ ' src/components/chat/__tests__/SwarmStatusCard.test.tsx > SwarmStatusCard > builds a card model from swarm.started payload 2ms
+ ' src/components/chat/__tests__/SwarmStatusCard.test.tsx > SwarmStatusCard > updates tool and completion state from swarm events 2ms
+ ' src/components/chat/__tests__/SwarmStatusCard.test.tsx > SwarmStatusCard > builds fallback status from run_swarm tool result preview 1ms
+ ' src/lib/__tests__/utils.test.ts > cn > merges class names 9ms
+ ' src/lib/__tests__/utils.test.ts > cn > deduplicates tailwind conflicts   last wins 0ms
+ ' src/lib/__tests__/utils.test.ts > cn > handles conditional classes via clsx 0ms
+ ' src/lib/__tests__/utils.test.ts > cn > handles undefined and null inputs 0ms
+ ' src/lib/__tests__/utils.test.ts > cn > handles empty input 0ms
+ ' src/lib/__tests__/utils.test.ts > cn > merges complex tailwind conflicts 0ms
+ ' src/lib/__tests__/utils.test.ts > cn > preserves non-conflicting classes from different groups 0ms
+ ' src/i18n/__tests__/i18n.test.ts > i18n locale parity > zh-CN has every key from en.json 5ms
+ ' src/i18n/__tests__/i18n.test.ts > i18n locale parity > ja has every key from en.json 2ms
+ ' src/i18n/__tests__/i18n.test.ts > i18n locale parity > ko has every key from en.json 1ms
+ ' src/i18n/__tests__/i18n.test.ts > i18n locale parity > ar has every key from en.json 1ms
+ ' src/i18n/__tests__/i18n.test.ts > i18n locale parity > zh-CN has no extra keys beyond en.json 2ms
+ ' src/i18n/__tests__/i18n.test.ts > i18n locale parity > ja has no extra keys beyond en.json 2ms
+ ' src/i18n/__tests__/i18n.test.ts > i18n locale parity > ko has no extra keys beyond en.json 2ms
+ ' src/i18n/__tests__/i18n.test.ts > i18n locale parity > ar has no extra keys beyond en.json 2ms
+ ' src/i18n/__tests__/i18n.test.ts > i18n locale parity > en.json has at least 100 keys (sanity check) 0ms
+ ' src/i18n/__tests__/i18n.test.ts > i18n interpolation parity > zh-CN has the same {{variables}} as en.json in every string 2ms
+ ' src/i18n/__tests__/i18n.test.ts > i18n interpolation parity > ja has the same {{variables}} as en.json in every string 3ms
+ ' src/i18n/__tests__/i18n.test.ts > i18n interpolation parity > ko has the same {{variables}} as en.json in every string 3ms
+ ' src/i18n/__tests__/i18n.test.ts > i18n interpolation parity > ar has the same {{variables}} as en.json in every string 2ms
+ ' src/i18n/__tests__/i18n.test.ts > i18n utilities > isRtl returns true for Arabic 0ms
+ ' src/i18n/__tests__/i18n.test.ts > i18n utilities > isRtl returns true for Arabic regional variants 0ms
+ ' src/i18n/__tests__/i18n.test.ts > i18n utilities > isRtl returns false for LTR languages 0ms
+ ' src/i18n/__tests__/i18n.test.ts > i18n utilities > isRtl returns false for LTR regional variants 0ms
+ ' src/i18n/__tests__/i18n.test.ts > i18n utilities > isRtl returns false for unknown codes 0ms
+ ' src/i18n/__tests__/i18n.test.ts > i18n utilities > SUPPORTED_LANGUAGES contains all 5 registered locales 0ms
+ ' src/i18n/__tests__/i18n.test.ts > i18n utilities > accepts zh-CN as an explicit supported language 2ms
+ ' src/lib/__tests__/indicators.test.ts > calcMA > returns null for indices before period-1 2ms
+ ' src/lib/__tests__/indicators.test.ts > calcMA > computes correct simple moving average 0ms
+ ' src/lib/__tests__/indicators.test.ts > calcMA > handles period equal to data length 0ms
+ ' src/lib/__tests__/indicators.test.ts > calcMA > handles single element with period 1 1ms
+ ' src/lib/__tests__/indicators.test.ts > calcMA > returns all null when period exceeds data length 0ms
+ ' src/lib/__tests__/indicators.test.ts > calcEMA > returns null before period-1 0ms
+ ' src/lib/__tests__/indicators.test.ts > calcEMA > first EMA value equals SMA of first period values 0ms
+ ' src/lib/__tests__/indicators.test.ts > calcEMA > subsequent values use exponential smoothing 0ms
+ ' src/lib/__tests__/indicators.test.ts > calcEMA > handles empty array 0ms
+ ' src/lib/__tests__/indicators.test.ts > calcBOLL > returns null for upper/lower/mid before period 0ms
+ ' src/lib/__tests__/indicators.test.ts > calcBOLL > mid equals SMA at period boundary 0ms
+ ' src/lib/__tests__/indicators.test.ts > calcBOLL > upper > mid > lower for varying data 1ms
+ ' src/lib/__tests__/indicators.test.ts > calcBOLL > upper and lower are symmetric around mid 0ms
+ ' src/lib/__tests__/indicators.test.ts > calcMACD > returns null DIF before slow period 0ms
+ ' src/lib/__tests__/indicators.test.ts > calcMACD > DIF exists after slow period 0ms
+ ' src/lib/__tests__/indicators.test.ts > calcMACD > signal line exists after enough DIF values 0ms
+ ' src/lib/__tests__/indicators.test.ts > calcMACD > histogram = dif - signal where both exist 0ms
+ ' src/lib/__tests__/indicators.test.ts > calcRSI > returns null for first period entries 1ms
+ ' src/lib/__tests__/indicators.test.ts > calcRSI > RSI is between 0 and 100 2ms
+ ' src/lib/__tests__/indicators.test.ts > calcRSI > all-up data gives RSI = 100 0ms
+ ' src/lib/__tests__/indicators.test.ts > calcRSI > all-down data gives RSI = 0 0ms
+ ' src/lib/__tests__/indicators.test.ts > calcRSI > returns all null when data length < period+1 0ms
+ ' src/lib/__tests__/indicators.test.ts > calcKDJ > returns null for indices before period-1 1ms
+ ' src/lib/__tests__/indicators.test.ts > calcKDJ > produces non-null K, D, J from period-1 onward 0ms
+ ' src/lib/__tests__/indicators.test.ts > calcKDJ > J = 3K - 2D 0ms
+ ' src/lib/__tests__/indicators.test.ts > calcKDJ > K and D are between 0 and 100 0ms
+ ' src/lib/__tests__/indicators.test.ts > calcKDJ > returns all null when data shorter than period 0ms
+ ' src/lib/__tests__/api.test.ts > api request helper > rejects non-JSON responses with a descriptive error 98ms
+ ' src/lib/__tests__/apiAlphaFoundry.test.ts > Alpha Foundry API client > uses GET-only read endpoints 72ms
+ ' src/stores/__tests__/agent.test.ts > agent store   initial state > has correct defaults 4ms
+ ' src/stores/__tests__/agent.test.ts > addMessage > appends a message with auto-generated id 1ms
+ ' src/stores/__tests__/agent.test.ts > addMessage > preserves provided id 0ms
+ ' src/stores/__tests__/agent.test.ts > addMessage > accumulates multiple messages in order 0ms
+ ' src/stores/__tests__/agent.test.ts > appendDelta / clearStreaming > accumulates streaming text 0ms
+ ' src/stores/__tests__/agent.test.ts > appendDelta / clearStreaming > clearStreaming resets to empty 0ms
+ ' src/stores/__tests__/agent.test.ts > setStatus > sets status to streaming and records streamingSessionId 0ms
+ ' src/stores/__tests__/agent.test.ts > setStatus > clears streamingSessionId when status leaves streaming 0ms
+ ' src/stores/__tests__/agent.test.ts > setStatus > does not set streamingSessionId when sessionId is null 0ms
+ ' src/stores/__tests__/agent.test.ts > setSessionId / loadHistory > sets session id 0ms
+ ' src/stores/__tests__/agent.test.ts > setSessionId / loadHistory > loadHistory replaces messages 0ms
+ ' src/stores/__tests__/agent.test.ts > tool calls > addToolCall appends entry 0ms
+ ' src/stores/__tests__/agent.test.ts > tool calls > updateToolCall patches matching entry 0ms
+ ' src/stores/__tests__/agent.test.ts > tool calls > updateToolCall ignores non-matching id 0ms
+ ' src/stores/__tests__/agent.test.ts > session cache > caches and retrieves session messages 0ms
+ ' src/stores/__tests__/agent.test.ts > session cache > returns undefined for uncached session 0ms
+ ' src/stores/__tests__/agent.test.ts > session cache > evicts oldest when cache exceeds SESSION_CACHE_MAX (5) 0ms
+ ' src/stores/__tests__/agent.test.ts > session cache > re-caching same key moves it to newest 0ms
+ ' src/stores/__tests__/agent.test.ts > setSseStatus > sets status and retry attempt 0ms
+ ' src/stores/__tests__/agent.test.ts > setSseStatus > defaults retryAttempt to 0 0ms
+ ' src/stores/__tests__/agent.test.ts > switchSession > sets new session, clears messages/status/toolCalls 0ms
+ ' src/stores/__tests__/agent.test.ts > switchSession > pre-loads messages when provided 0ms
+ ' src/stores/__tests__/agent.test.ts > switchSession > preserves streamingSessionId from prior session 0ms
+ ' src/stores/__tests__/agent.test.ts > setSessionLoading > sets loading flag 0ms
+ ' src/stores/__tests__/agent.test.ts > reset > returns store to initial state 0ms
+ ' src/lib/__tests__/formatters.test.ts > getMetricLabel > returns human label for known keys 2ms
+ ' src/lib/__tests__/formatters.test.ts > getMetricLabel > returns raw key for unknown keys 0ms
+ ' src/lib/__tests__/formatters.test.ts > formatMetricVal > formats percentage keys with sign and % 1ms
+ ' src/lib/__tests__/formatters.test.ts > formatMetricVal > formats zero percentage without sign 0ms
+ ' src/lib/__tests__/formatters.test.ts > formatMetricVal > formats ratio keys with sign 0ms
+ ' src/lib/__tests__/formatters.test.ts > formatMetricVal > formats integer keys as rounded whole numbers 0ms
+ ' src/lib/__tests__/formatters.test.ts > formatMetricVal > formats final_value with locale grouping 72ms
+ ' src/lib/__tests__/formatters.test.ts > formatMetricVal > formats avg_holding_days with one decimal 0ms
+ ' src/lib/__tests__/formatters.test.ts > formatMetricVal > falls back to 4 decimal places for unknown keys 0ms
+ ' src/lib/__tests__/formatters.test.ts > metricSentiment > returns neutral for neutral keys regardless of value 0ms
+ ' src/lib/__tests__/formatters.test.ts > metricSentiment > max_drawdown: > -0.05 is positive 0ms
+ ' src/lib/__tests__/formatters.test.ts > metricSentiment > max_drawdown: -0.05 to -0.2 is neutral 0ms
+ ' src/lib/__tests__/formatters.test.ts > metricSentiment > max_drawdown: <= -0.2 is negative 0ms
+ ' src/lib/__tests__/formatters.test.ts > metricSentiment > win_rate: >= 0.5 is positive 0ms
+ ' src/lib/__tests__/formatters.test.ts > metricSentiment > win_rate: 0.35-0.5 is neutral 0ms
+ ' src/lib/__tests__/formatters.test.ts > metricSentiment > win_rate: < 0.35 is negative 0ms
+ ' src/lib/__tests__/formatters.test.ts > metricSentiment > sharpe: >= 1.0 positive, >= 0.3 neutral, < 0.3 negative 0ms
+ ' src/lib/__tests__/formatters.test.ts > metricSentiment > information_ratio: >= 0.5 positive, >= 0 neutral, < 0 negative 0ms
+ ' src/lib/__tests__/formatters.test.ts > metricSentiment > max_consecutive_loss: <= 3 positive, <= 6 neutral, > 6 negative 0ms
+ ' src/lib/__tests__/formatters.test.ts > metricSentiment > generic: positive > 0, neutral === 0, negative < 0 0ms
+ ' src/lib/__tests__/formatters.test.ts > formatTimestamp > formats timestamp as HH:MM with zero-padding 0ms
+ ' src/lib/__tests__/formatters.test.ts > formatTimestamp > handles midnight 0ms
+ ' src/lib/__tests__/formatters.test.ts > abbreviateNum > abbreviates billions 0ms
+ ' src/lib/__tests__/formatters.test.ts > abbreviateNum > abbreviates millions 0ms
+ ' src/lib/__tests__/formatters.test.ts > abbreviateNum > abbreviates thousands 0ms
+ ' src/lib/__tests__/formatters.test.ts > abbreviateNum > returns locale string for small numbers 0ms
+ ' src/lib/__tests__/formatters.test.ts > abbreviateNum > handles negative values 0ms
+ ' src/lib/__tests__/formatters.test.ts > DISPLAY_ORDER > contains all keys from METRIC_LABELS 1ms
+ ' src/components/chat/__tests__/AgentAvatar.test.tsx > AgentAvatar > renders the letter P 38ms
+ ' src/components/chat/__tests__/AgentAvatar.test.tsx > AgentAvatar > has gradient background styling 4ms
+ ' src/components/chat/__tests__/MetricsCard.test.tsx > MetricsCard > renders nothing when metrics is empty 20ms
+ ' src/components/chat/__tests__/MetricsCard.test.tsx > MetricsCard > renders metric labels 35ms
+ ' src/components/chat/__tests__/MetricsCard.test.tsx > MetricsCard > renders formatted metric values 13ms
+ ' src/components/chat/__tests__/MetricsCard.test.tsx > MetricsCard > compact mode shows only first 6 metrics 9ms
+ ' src/components/chat/__tests__/MetricsCard.test.tsx > MetricsCard > ignores metrics not in DISPLAY_ORDER 3ms
+ ' src/components/chat/__tests__/MetricsCard.test.tsx > MetricsCard > applies sentiment colors 5ms
+ ' src/components/chat/__tests__/MetricsCard.test.tsx > MetricsCard > applies negative sentiment for bad values 5ms
+ ' src/hooks/__tests__/useDarkMode.test.ts > useDarkMode > defaults to light when no preference stored and OS is light 27ms
+ ' src/hooks/__tests__/useDarkMode.test.ts > useDarkMode > reads dark preference from localStorage 4ms
+ ' src/hooks/__tests__/useDarkMode.test.ts > useDarkMode > reads light preference from localStorage 3ms
+ ' src/hooks/__tests__/useDarkMode.test.ts > useDarkMode > toggles dark mode 5ms
+ ' src/hooks/__tests__/useDarkMode.test.ts > useDarkMode > persists preference to localStorage on change 3ms
+ ' src/hooks/__tests__/useDarkMode.test.ts > useDarkMode > toggles dark class on document.documentElement 3ms
+ ' src/components/common/__tests__/Skeleton.test.tsx > Skeleton > renders with animate-pulse class 35ms
+ ' src/components/common/__tests__/Skeleton.test.tsx > Skeleton > applies custom className 4ms
+ ' src/components/common/__tests__/Skeleton.test.tsx > Skeleton > applies custom style 10ms
+ ' src/components/common/__tests__/Skeleton.test.tsx > SkeletonMetrics > renders 6 skeleton items 18ms
+ ' src/components/common/__tests__/Skeleton.test.tsx > SkeletonChart > renders with default height of 300 4ms
+ ' src/components/common/__tests__/Skeleton.test.tsx > SkeletonChart > renders with custom height 3ms
+ ' src/hooks/__tests__/useSSE.test.ts > useSSE   connect/disconnect > creates an EventSource on connect 27ms
+ ' src/hooks/__tests__/useSSE.test.ts > useSSE   connect/disconnect > closes previous EventSource on reconnect 5ms
+ ' src/hooks/__tests__/useSSE.test.ts > useSSE   connect/disconnect > sets status to connected on open 4ms
+ ' src/hooks/__tests__/useSSE.test.ts > useSSE   connect/disconnect > disconnect closes source and sets disconnected status 3ms
+ ' src/hooks/__tests__/useSSE.test.ts > useSSE   event handling > dispatches typed events to handlers 5ms
+ ' src/hooks/__tests__/useSSE.test.ts > useSSE   event handling > dispatches reasoning progress events 8ms
+ ' src/hooks/__tests__/useSSE.test.ts > useSSE   event handling > dispatches stream reset events 3ms
+ ' src/hooks/__tests__/useSSE.test.ts > useSSE   event handling > falls back to message handler for known event types without specific handler 4ms
+ ' src/hooks/__tests__/useSSE.test.ts > useSSE   event handling > handles malformed JSON gracefully 3ms
+ ' src/hooks/__tests__/useSSE.test.ts > useSSE   deduplication > deduplicates events by lastEventId 11ms
+ ' src/hooks/__tests__/useSSE.test.ts > useSSE   deduplication > evicts oldest events when dedup capacity exceeded 15ms
+ ' src/hooks/__tests__/useSSE.test.ts > useSSE   exponential backoff > schedules reconnect with exponential delay on error 6ms
+ ' src/hooks/__tests__/useSSE.test.ts > useSSE   exponential backoff > caps retry delay at maxRetryMs 3ms
+ ' src/hooks/__tests__/useSSE.test.ts > useSSE   Last-Event-ID resume > appends Last-Event-ID to reconnect URL 5ms
+ ' src/components/chat/__tests__/ProgressBar.test.tsx > ProgressBar > renders nothing when total <= 0 23ms
+ ' src/components/chat/__tests__/ProgressBar.test.tsx > ProgressBar > renders nothing for negative total 3ms
+ ' src/components/layout/__tests__/ConnectionBanner.test.tsx > ConnectionBanner > renders nothing when status is connected 27ms
+ ' src/components/layout/__tests__/ConnectionBanner.test.tsx > ConnectionBanner > renders nothing when status is disconnected 5ms
+ ' src/components/layout/__tests__/ConnectionBanner.test.tsx > ConnectionBanner > shows reconnecting message with attempt number 38ms
+ ' src/components/layout/__tests__/ConnectionBanner.test.tsx > ConnectionBanner > defaults to attempt 1 when retryAttempt is not provided 6ms
+ ' src/components/layout/__tests__/ConnectionBanner.test.tsx > ConnectionBanner > has warning styling 5ms
+node.exe : stderr | src/components/common/__tests__/ErrorBoundary.test.tsx > ErrorBoundary > renders default fallback w
+ith error message on error
+At line:1 char:1
++ & "C:\nvm4w\nodejs/node.exe" "C:\nvm4w\nodejs/node_modules/npm/bin/np ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (stderr | src/co...essage on error:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+Error: Something broke
+    at Thrower (D:/Vibe-Trading/frontend/src/components/common/__tests__/ErrorBoundary.test.tsx:6:9)
+    at Object.react_stack_bottom_frame (D:\Vibe-Trading\frontend\node_modules\react-dom\cjs\react-dom-client.developmen
+t.js:25904:20)
+    at renderWithHooks (D:\Vibe-Trading\frontend\node_modules\react-dom\cjs\react-dom-client.development.js:7662:22)
+    at updateFunctionComponent (D:\Vibe-Trading\frontend\node_modules\react-dom\cjs\react-dom-client.development.js:101
+66:19)
+    at beginWork (D:\Vibe-Trading\frontend\node_modules\react-dom\cjs\react-dom-client.development.js:11778:18)
+    at runWithFiberInDEV (D:\Vibe-Trading\frontend\node_modules\react-dom\cjs\react-dom-client.development.js:874:13)
+    at performUnitOfWork (D:\Vibe-Trading\frontend\node_modules\react-dom\cjs\react-dom-client.development.js:17641:22)
+    at workLoopSync (D:\Vibe-Trading\frontend\node_modules\react-dom\cjs\react-dom-client.development.js:17469:41)
+    at renderRootSync (D:\Vibe-Trading\frontend\node_modules\react-dom\cjs\react-dom-client.development.js:17450:11)
+    at performWorkOnRoot (D:\Vibe-Trading\frontend\node_modules\react-dom\cjs\react-dom-client.development.js:16583:35)
+ {
+  [stack]: [Getter/Setter],
+  [message]: 'Something broke'
+}
+
+The above error occurred in the <Thrower> component.
+
+React will try to recreate this component tree from scratch using the error boundary you provided, ErrorBoundary.
+
+
+stderr | src/components/common/__tests__/ErrorBoundary.test.tsx > ErrorBoundary > renders custom fallback when provided
+Error: ignored
+    at Thrower (D:/Vibe-Trading/frontend/src/components/common/__tests__/ErrorBoundary.test.tsx:6:9)
+    at Object.react_stack_bottom_frame (D:\Vibe-Trading\frontend\node_modules\react-dom\cjs\react-dom-client.developmen
+t.js:25904:20)
+    at renderWithHooks (D:\Vibe-Trading\frontend\node_modules\react-dom\cjs\react-dom-client.development.js:7662:22)
+    at updateFunctionComponent (D:\Vibe-Trading\frontend\node_modules\react-dom\cjs\react-dom-client.development.js:101
+66:19)
+    at beginWork (D:\Vibe-Trading\frontend\node_modules\react-dom\cjs\react-dom-client.development.js:11778:18)
+    at runWithFiberInDEV (D:\Vibe-Trading\frontend\node_modules\react-dom\cjs\react-dom-client.development.js:874:13)
+    at performUnitOfWork (D:\Vibe-Trading\frontend\node_modules\react-dom\cjs\react-dom-client.development.js:17641:22)
+    at workLoopSync (D:\Vibe-Trading\frontend\node_modules\react-dom\cjs\react-dom-client.development.js:17469:41)
+    at renderRootSync (D:\Vibe-Trading\frontend\node_modules\react-dom\cjs\react-dom-client.development.js:17450:11)
+    at performWorkOnRoot (D:\Vibe-Trading\frontend\node_modules\react-dom\cjs\react-dom-client.development.js:16583:35)
+ {
+  [stack]: [Getter/Setter],
+  [message]: 'ignored'
+}
+
+The above error occurred in the <Thrower> component.
+
+React will try to recreate this component tree from scratch using the error boundary you provided, ErrorBoundary.
+
+
+stderr | src/components/common/__tests__/ErrorBoundary.test.tsx > ErrorBoundary > shows default message when error has
+no message
+{}
+
+The above error occurred in the <ThrowEmpty> component.
+
+React will try to recreate this component tree from scratch using the error boundary you provided, ErrorBoundary.
+
+
+ ' src/components/common/__tests__/ErrorBoundary.test.tsx > ErrorBoundary > renders children normally when no error 43ms
+ ' src/components/common/__tests__/ErrorBoundary.test.tsx > ErrorBoundary > renders default fallback with error message on error 30ms
+ ' src/components/common/__tests__/ErrorBoundary.test.tsx > ErrorBoundary > renders custom fallback when provided 11ms
+ ' src/components/common/__tests__/ErrorBoundary.test.tsx > ErrorBoundary > shows default message when error has no message 15ms
+ ' src/components/chat/__tests__/ProgressBar.test.tsx > ProgressBar > renders a progress element 165ms
+ ' src/components/chat/__tests__/ProgressBar.test.tsx > ProgressBar > clamps current to [0, total] 13ms
+ ' src/components/chat/__tests__/ProgressBar.test.tsx > ProgressBar > computes correct width percentage 6ms
+ ' src/components/chat/__tests__/ProgressBar.test.tsx > ProgressBar > shows count when showCount is true 8ms
+ ' src/components/chat/__tests__/ProgressBar.test.tsx > ProgressBar > does not show count by default 5ms
+ ' src/components/chat/__tests__/ProgressBar.test.tsx > ProgressBar > uses h-1 height class by default (xs) 4ms
+ ' src/components/chat/__tests__/ProgressBar.test.tsx > ProgressBar > uses h-2 height class when height=sm 4ms
+ ' src/components/research/__tests__/AlphaFoundryPanel.test.tsx > AlphaFoundryPanel > renders exact evidence codes and quant readiness fields from fixture data 184ms
+ ' src/components/chat/__tests__/ToolProgressIndicator.test.tsx > ToolProgressIndicator > renders nothing when no tools are running 23ms
+ ' src/components/chat/__tests__/ToolProgressIndicator.test.tsx > ToolProgressIndicator > renders nothing for empty array 2ms
+stderr | src/pages/__tests__/Runtime.test.tsx > Runtime page > fails closed when live status is unavailable
+Failed to load runtime status Error: backend offline
+    at D:/Vibe-Trading/frontend/src/pages/__tests__/Runtime.test.tsx:101:45
+    at file:///D:/Vibe-Trading/frontend/node_modules/@vitest/runner/dist/chunk-artifact.js:302:11
+    at file:///D:/Vibe-Trading/frontend/node_modules/@vitest/runner/dist/chunk-artifact.js:1903:26
+    at file:///D:/Vibe-Trading/frontend/node_modules/@vitest/runner/dist/chunk-artifact.js:2326:20
+    at new Promise (<anonymous>)
+    at runWithCancel (file:///D:/Vibe-Trading/frontend/node_modules/@vitest/runner/dist/chunk-artifact.js:2323:10)
+    at file:///D:/Vibe-Trading/frontend/node_modules/@vitest/runner/dist/chunk-artifact.js:2305:20
+    at new Promise (<anonymous>)
+    at runWithTimeout (file:///D:/Vibe-Trading/frontend/node_modules/@vitest/runner/dist/chunk-artifact.js:2272:10)
+    at file:///D:/Vibe-Trading/frontend/node_modules/@vitest/runner/dist/chunk-artifact.js:2955:64
+
+ ' src/pages/__tests__/Runtime.test.tsx > Runtime page > renders broker auth, runner, mandate, and risk state from live status 344ms
+ ' src/pages/__tests__/Runtime.test.tsx > Runtime page > fails closed when live status is unavailable 73ms
+ ' src/components/chat/__tests__/ToolProgressIndicator.test.tsx > ToolProgressIndicator > renders single running tool 302ms
+ ' src/components/chat/__tests__/ToolProgressIndicator.test.tsx > ToolProgressIndicator > renders multiple running tools with header 33ms
+ ' src/components/chat/__tests__/ToolProgressIndicator.test.tsx > ToolProgressIndicator > shows overflow indicator for > 3 running tools 28ms
+ ' src/components/chat/__tests__/ToolProgressIndicator.test.tsx > ToolProgressIndicator > shows determinate progress bar when progress data exists 100ms
+stderr | src/pages/__tests__/Runtime.test.tsx > Runtime page > refreshes by reading live status again
+An update to Runtime inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/w
+rap-tests-with-act
+An update to Runtime inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/w
+rap-tests-with-act
+An update to Runtime inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/w
+rap-tests-with-act
+
+ ' src/components/chat/__tests__/ThinkingTimeline.test.tsx > ThinkingTimeline > shows summary text when done 86ms
+ ' src/lib/__tests__/apiAuth.test.ts > apiAuth > getApiAuthKey > returns empty string when nothing stored 2ms
+ ' src/lib/__tests__/apiAuth.test.ts > apiAuth > getApiAuthKey > returns stored key 0ms
+ ' src/lib/__tests__/apiAuth.test.ts > apiAuth > setApiAuthKey > stores trimmed value 0ms
+ ' src/lib/__tests__/apiAuth.test.ts > apiAuth > setApiAuthKey > removes key when value is empty/whitespace 0ms
+ ' src/lib/__tests__/apiAuth.test.ts > apiAuth > setApiAuthKey > removes key when value is empty string 0ms
+ ' src/lib/__tests__/apiAuth.test.ts > apiAuth > authHeaders > returns empty object when no key set 1ms
+ ' src/lib/__tests__/apiAuth.test.ts > apiAuth > authHeaders > returns Bearer header when key exists 0ms
+ ' src/lib/__tests__/apiAuth.test.ts > apiAuth > authQuerySuffix > returns empty string when no key 0ms
+ ' src/lib/__tests__/apiAuth.test.ts > apiAuth > authQuerySuffix > returns encoded query param when key exists 0ms
+ ' src/lib/__tests__/apiAuth.test.ts > apiAuth > withAuthQuery > returns url unchanged when no key 0ms
+ ' src/lib/__tests__/apiAuth.test.ts > apiAuth > withAuthQuery > appends with ? when url has no query string 0ms
+ ' src/lib/__tests__/apiAuth.test.ts > apiAuth > withAuthQuery > appends with & when url already has query string 0ms
+ ' src/lib/__tests__/tools.test.ts > TOOL_LABELS > maps known tool names to user-facing labels 1ms
+ ' src/lib/__tests__/tools.test.ts > TOOL_LABELS > contains all trading connector tools 0ms
+ ' src/lib/__tests__/tools.test.ts > localizeToolName > returns label for known tools 0ms
+ ' src/lib/__tests__/tools.test.ts > localizeToolName > returns fallback for unknown tools when fallback provided 0ms
+ ' src/lib/__tests__/tools.test.ts > localizeToolName > returns raw tool name for unknown tools with no fallback 0ms
+ ' src/lib/__tests__/tools.test.ts > localizeToolName > prefers TOOL_LABELS over fallback 0ms
+ ' src/__tests__/viteProxy.test.ts > Vite API proxy config > proxies channel runtime endpoints 1ms
+ ' src/__tests__/viteProxy.test.ts > Vite API proxy config > proxies settings endpoints 0ms
+ ' src/lib/__tests__/runReports.test.ts > isReportWorthyRun > returns false for null/undefined 2ms
+ ' src/lib/__tests__/runReports.test.ts > isReportWorthyRun > returns false for empty run with no data 0ms
+ ' src/lib/__tests__/runReports.test.ts > isReportWorthyRun > returns true when metrics has keys 0ms
+ ' src/lib/__tests__/runReports.test.ts > isReportWorthyRun > returns true when run_card has keys 0ms
+ ' src/lib/__tests__/runReports.test.ts > isReportWorthyRun > returns true when equity_curve is non-empty 0ms
+ ' src/lib/__tests__/runReports.test.ts > isReportWorthyRun > returns true when trade_log is non-empty 0ms
+ ' src/lib/__tests__/runReports.test.ts > isReportWorthyRun > returns true when trade_markers is non-empty 0ms
+ ' src/lib/__tests__/runReports.test.ts > isReportWorthyRun > returns true when validation has keys 0ms
+ ' src/lib/__tests__/runReports.test.ts > isReportWorthyRun > returns true when price_series has non-empty array 0ms
+ ' src/lib/__tests__/runReports.test.ts > isReportWorthyRun > returns false when price_series values are all empty arrays 0ms
+ ' src/lib/__tests__/runReports.test.ts > isReportWorthyRun > returns true when artifacts contain matching filenames 0ms
+ ' src/lib/__tests__/runReports.test.ts > isReportWorthyRun > returns false for artifacts with non-matching names 0ms
+ ' src/lib/__tests__/runReports.test.ts > isReportWorthyRun > handles empty artifacts array 0ms
+ ' src/pages/__tests__/Runtime.test.tsx > Runtime page > refreshes by reading live status again 326ms
+ ' src/components/chat/__tests__/WelcomeScreen.test.tsx > WelcomeScreen > renders the title 110ms
+ ' src/components/chat/__tests__/WelcomeScreen.test.tsx > WelcomeScreen > renders capability chips 64ms
+ ' src/pages/__tests__/Runtime.test.tsx > Runtime page > keeps the newest live status when an older request resolves later 112ms
+ ' src/pages/__tests__/Runtime.test.tsx > Runtime page > aborts an in-flight status request on unmount 10ms
+ ' src/pages/__tests__/Runtime.test.tsx > Runtime page > renders sub-minute mandate expiry as seconds 32ms
+ ' src/components/chat/__tests__/ThinkingTimeline.test.tsx > ThinkingTimeline > shows running state with spinner 14ms
+ ' src/components/chat/__tests__/MessageBubble.test.tsx > MessageBubble > user messages > renders user content in a styled bubble 54ms
+ ' src/components/chat/__tests__/MessageBubble.test.tsx > MessageBubble > user messages > shows timestamp 10ms
+ ' src/components/chat/__tests__/MessageBubble.test.tsx > MessageBubble > answer messages > renders markdown content 17ms
+ ' src/components/chat/__tests__/MessageBubble.test.tsx > MessageBubble > error messages > renders error content with danger styling 10ms
+ ' src/pages/__tests__/Reports.test.tsx > Reports page > lists backtest reports newest first with Full Report links and skips non-report runs 810ms
+ ' src/pages/__tests__/Reports.test.tsx > Reports page > filters reports by search text 93ms
+ ' src/components/chat/__tests__/MessageBubble.test.tsx > MessageBubble > error messages > shows retry button when onRetry is provided 171ms
+ ' src/components/chat/__tests__/MessageBubble.test.tsx > MessageBubble > error messages > calls onRetry when retry button is clicked 105ms
+ ' src/components/chat/__tests__/MessageBubble.test.tsx > MessageBubble > error messages > shows timeout hint for timeout errors 8ms
+ ' src/components/chat/__tests__/MessageBubble.test.tsx > MessageBubble > run_complete messages > renders RunCompleteCard when runId is present 5ms
+ ' src/components/chat/__tests__/MessageBubble.test.tsx > MessageBubble > fallback > renders content for unknown message types 4ms
+ ' src/components/chat/__tests__/MessageBubble.test.tsx > MessageBubble > fallback > renders null for empty content on unknown types 2ms
+ ' src/components/chat/__tests__/ThinkingTimeline.test.tsx > ThinkingTimeline > expands and collapses on click 245ms
+ ' src/components/chat/__tests__/ThinkingTimeline.test.tsx > ThinkingTimeline > shows error icon when a step failed 11ms
+ ' src/components/chat/__tests__/WelcomeScreen.test.tsx > WelcomeScreen > renders example categories 54ms
+ ' src/components/chat/__tests__/ThinkingTimeline.test.tsx > ThinkingTimeline > shows thinking content when expanded with no tools 78ms
+ ' src/components/chat/__tests__/ThinkingTimeline.test.tsx > ThinkingTimeline > starts expanded when isLatest is true 8ms
+ ' src/components/chat/__tests__/ThinkingTimeline.test.tsx > ThinkingTimeline > handles multiple tool steps 51ms
+ ' src/components/chat/__tests__/WelcomeScreen.test.tsx > WelcomeScreen > calls onExample with prompt when an example button is clicked 212ms
+ ' src/components/chat/__tests__/WelcomeScreen.test.tsx > WelcomeScreen > renders the helper text 39ms
+ ' src/pages/__tests__/SettingsChannels.test.tsx > Settings IM channels panel > renders channel runtime status and refreshes it 935ms
+ ' src/pages/__tests__/SettingsChannels.test.tsx > Settings IM channels panel > starts channels from the settings control surface 240ms
+ ' src/pages/__tests__/SettingsChannels.test.tsx > Settings IM channels panel > still renders LLM and data source settings when channel status fails 177ms
+
+ Test Files  28 passed (28)
+      Tests  240 passed (240)
+   Start at  15:17:16
+   Duration  6.32s (transform 4.20s, setup 10.82s, import 17.25s, tests 6.40s, environment 67.30s)

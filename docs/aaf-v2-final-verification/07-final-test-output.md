@@ -10,13 +10,13 @@
 
 ```text
 pytest agent/tests/alpha_foundry -q
-99 passed in 7.07s
+101 passed in 11.43s
 
 pytest agent/tests/security -q
-10 passed, 5 warnings in 1.56s
+13 passed, 5 warnings in 2.56s
 
 pytest agent/tests/ -k "security or redteam or attack" -q
-154 passed, 4723 deselected, 5 warnings in 20.38s
+157 passed, 4725 deselected, 5 warnings in 17.78s
 
 pytest agent/tests/reliability -q
 25 passed in 2.31s
@@ -31,10 +31,10 @@ pytest agent/tests/contracts/test_alpha_foundry_openapi_snapshot.py -q
 3 passed, 5 warnings in 1.42s
 
 pytest agent/tests/alpha_foundry/test_performance.py -q
-2 passed in 2.97s
+2 passed in 2.25s
 
 pytest agent/tests/ -q --ignore=agent/tests/alpha_foundry
-4772 passed, 6 skipped, 135 warnings in 190.59s
+4775 passed, 6 skipped, 135 warnings in 383.60s
 ```
 
 ## Scripts

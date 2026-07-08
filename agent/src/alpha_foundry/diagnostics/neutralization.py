@@ -55,7 +55,12 @@ def neutralize_factor_frame(
     exposure_frame["date"] = pd.to_datetime(exposure_frame["date"]).dt.normalize()
     factor = factor.copy()
     factor["date"] = pd.to_datetime(factor["date"]).dt.normalize()
-    joined = factor.merge(exposure_frame, on=["date", "symbol"], how="left")
+    if _aligned_key_frame(factor, exposure_frame):
+        joined = factor.copy()
+        for column in ["industry", "float_mktcap", "beta_60d", "log_avg_daily_turnover_20d"]:
+            joined[column] = exposure_frame[column].to_numpy()
+    else:
+        joined = factor.merge(exposure_frame, on=["date", "symbol"], how="left")
 
     residual_parts: list[pd.DataFrame] = []
     warnings: list[str] = []
@@ -92,6 +97,11 @@ def _neutralize_group(
 ) -> tuple[np.ndarray, list[str]]:
     warnings: list[str] = []
     y = group["factor_value"].astype(float).to_numpy()
+    fast_path = _constant_numeric_exposure_residuals(group, y)
+    if fast_path is not None:
+        residuals, fast_path_warnings = fast_path
+        return residuals, fast_path_warnings
+
     pieces: list[np.ndarray] = [np.ones((len(group), 1), dtype=float)]
 
     industry = pd.get_dummies(group["industry"].astype(str), drop_first=True, dtype=float)
@@ -126,3 +136,31 @@ def _winsorize(values: np.ndarray) -> np.ndarray:
     lower = np.nanquantile(values, 0.01)
     upper = np.nanquantile(values, 0.99)
     return np.clip(values, lower, upper)
+
+
+def _constant_numeric_exposure_residuals(
+    group: pd.DataFrame,
+    y: np.ndarray,
+) -> tuple[np.ndarray, list[str]] | None:
+    for column in ["float_mktcap", "beta_60d", "log_avg_daily_turnover_20d"]:
+        values = group[column].to_numpy(dtype=float, copy=False)
+        if not np.isfinite(values).all() or not np.all(values == values[0]):
+            return None
+
+    industry = group["industry"].astype(str).to_numpy()
+    unique_industries, inverse, counts = np.unique(industry, return_inverse=True, return_counts=True)
+    warnings: list[str] = []
+    if (counts == 1).any():
+        warnings.append("industry_dummy_single_stock_dropped")
+    sums = np.bincount(inverse, weights=y, minlength=len(unique_industries))
+    fitted = sums[inverse] / counts[inverse]
+    return y - fitted, warnings
+
+
+def _aligned_key_frame(left: pd.DataFrame, right: pd.DataFrame) -> bool:
+    if len(left) != len(right):
+        return False
+    return bool(
+        np.array_equal(left["date"].to_numpy(), right["date"].to_numpy())
+        and np.array_equal(left["symbol"].to_numpy(), right["symbol"].to_numpy())
+    )

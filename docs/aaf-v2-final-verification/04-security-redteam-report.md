@@ -20,11 +20,13 @@ Local-only red-team audit of Alpha Foundry v2.1. No external network, no broker,
 | Scorecard override | requested production-ready with non-PSD risk model | invalid with exact hard failures | `agent/tests/security/test_alpha_foundry_scorecard_integrity.py` |
 | Markdown | script tag, `javascript:`, inline fake token/API key | escaped and redacted | `agent/tests/security/test_alpha_foundry_secret_redaction.py` |
 | Live IO | static scan for network/LLM/broker/shell snippets in Alpha Foundry code/demos | no offenders | `agent/tests/security/test_alpha_foundry_no_live_io.py` |
+| Forward store API | public update/delete mutation API and unresolved relative path | no mutation methods exposed; relative paths resolve before use | `agent/tests/security/test_alpha_foundry_attack_surface.py` |
+| Queue proxy policy | no-Level-2 queue proxy tries to inherit bar-close availability | fixture-only exploratory metadata/output; no Level-2 claim | same |
 
 ## Results
 
-- `pytest agent/tests/security -q`: `10 passed`
-- `pytest agent/tests/ -k "security or redteam or attack" -q`: `154 passed`
+- `pytest agent/tests/security -q`: `13 passed`
+- `pytest agent/tests/ -k "security or redteam or attack" -q`: `157 passed`
 - No live broker, no shell execution, no external network, no LLM calls were used for these tests.
 
 ## Security Conclusion

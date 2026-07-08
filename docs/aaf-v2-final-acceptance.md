@@ -7,7 +7,7 @@ This package completes the A-Share Alpha Foundry under IRR-AGL v2.1 hardened pha
 ## Scope Closed
 
 - Mechanism hypothesis registry with deterministic formula specs and PIT availability metadata.
-- PIT-safe `FactorOutputFrame` contract with the exact six allowed columns.
+- PIT-safe `FactorOutputFrame` contract with the exact nine v2.1 allowed columns.
 - A-share tradability masks for suspension, limit states, ST, new listing, T+1, and execution feasibility.
 - Mechanism factor families for limit liquidity, price-volume behavior, and financial quality PIT gates.
 - Factor falsification diagnostics with deterministic hard failure codes and TrialLedger participation.
@@ -74,7 +74,7 @@ The warnings are pre-existing framework/dependency warnings and factor `pct_chan
 - No LLM path can upgrade conclusion level, hard failures, or research-card gates.
 - EOD-only limit queue proxy demos remain exploratory and carry proxy/crowding warnings.
 - Best-trial-only reporting is rejected; TrialLedger count and selected trial metadata are disclosed.
-- Forward observations are append-only; update/delete mutation is rejected.
+- Forward observations are append-only; no public update/delete mutation API is exposed.
 - `AGENTS.MD` and `execplan.md` are local operator instructions only. They are ignored and were not staged or committed.
 
 ## Local Instruction File Guard

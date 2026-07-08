@@ -59,6 +59,9 @@ def build_multiple_testing_report(
     if selected_trial_id is not None and not trial_count:
         hard_failures.append(HardFailureCode.BEST_TRIAL_ONLY)
 
+    if selected_trial_id is not None and trial_count == 1 and not selection_policy:
+        hard_failures.append(HardFailureCode.BEST_TRIAL_ONLY)
+
     if trial_count is not None and trial_count > 1 and not selection_policy:
         hard_failures.append(HardFailureCode.MULTIPLE_TESTING_NOT_DISCLOSED)
 

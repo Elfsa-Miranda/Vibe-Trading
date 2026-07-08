@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -38,6 +39,10 @@ def join_factor_forward_returns(
     returns["date"] = pd.to_datetime(returns["date"]).dt.normalize()
     factor = clean_factor.copy()
     factor["date"] = pd.to_datetime(factor["date"]).dt.normalize()
+    if _aligned_key_frame(factor, returns):
+        joined = factor.copy()
+        joined[return_column] = returns[return_column].to_numpy()
+        return joined
     return factor.merge(returns, on=["date", "symbol"], how="inner")
 
 
@@ -69,9 +74,27 @@ def compute_ic_summary(
 
 
 def _safe_corr(left: pd.Series, right: pd.Series) -> float | None:
-    if len(left) < 2 or left.nunique(dropna=True) < 2 or right.nunique(dropna=True) < 2:
+    if len(left) < 2:
         return 0.0
-    value = float(left.astype(float).corr(right.astype(float)))
+
+    left_values = pd.to_numeric(left, errors="coerce").to_numpy(dtype=float, copy=False)
+    right_values = pd.to_numeric(right, errors="coerce").to_numpy(dtype=float, copy=False)
+    mask = np.isfinite(left_values) & np.isfinite(right_values)
+    if int(mask.sum()) < 2:
+        return 0.0
+
+    left_clean = left_values[mask]
+    right_clean = right_values[mask]
+    if np.ptp(left_clean) == 0.0 or np.ptp(right_clean) == 0.0:
+        return 0.0
+
+    left_centered = left_clean - float(left_clean.mean())
+    right_centered = right_clean - float(right_clean.mean())
+    denominator = float(np.sqrt(np.dot(left_centered, left_centered) * np.dot(right_centered, right_centered)))
+    if denominator == 0.0:
+        return 0.0
+
+    value = float(np.dot(left_centered, right_centered) / denominator)
     if math.isnan(value):
         return 0.0
     return value
@@ -82,4 +105,13 @@ def _mean_non_null(values: object) -> float | None:
     if not clean:
         return None
     return float(sum(clean) / len(clean))
+
+
+def _aligned_key_frame(left: pd.DataFrame, right: pd.DataFrame) -> bool:
+    if len(left) != len(right):
+        return False
+    return bool(
+        np.array_equal(left["date"].to_numpy(), right["date"].to_numpy())
+        and np.array_equal(left["symbol"].to_numpy(), right["symbol"].to_numpy())
+    )
 

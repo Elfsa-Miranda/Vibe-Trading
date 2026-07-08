@@ -56,7 +56,7 @@ def test_forward_decay_kill_demo_records_append_only_mutation_failure() -> None:
     snapshot = _snapshot("forward_decay_kill")
 
     assert snapshot["forward_status"] == "killed"
-    assert snapshot["mutation_error"] == "forward observations are append-only; update is forbidden"
+    assert snapshot["mutation_error"] == "duplicate observation_id rejected"
 
 
 def _snapshot(demo: str) -> dict:

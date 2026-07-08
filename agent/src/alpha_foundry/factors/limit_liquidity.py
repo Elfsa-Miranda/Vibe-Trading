@@ -58,7 +58,7 @@ def get_limit_liquidity_factor_metadata(
         can_claim_level2_queue_alpha=is_queue_proxy and level2_available,
         standalone_alpha_claim_allowed=not is_one_word_mask,
         signal_time=spec.formula.signal_time,
-        data_availability_policy=spec.formula.data_availability_policy,
+        data_availability_policy=_data_availability_policy(factor_id, level2_available=level2_available),
         factor_definition_hash=factor_definition_hash(spec),
     )
 
@@ -117,6 +117,7 @@ def compute_limit_liquidity_factor(
         factor_value=values,
         as_of=as_of,
         available_at=available_at,
+        level2_available=level2_available,
     )
 
 
@@ -306,6 +307,7 @@ def _build_factor_output(
     factor_value: pd.Series,
     as_of: pd.Timestamp | None,
     available_at: pd.Timestamp | None,
+    level2_available: bool,
 ) -> pd.DataFrame:
     default_as_of = frame["date"].dt.normalize() + pd.Timedelta(hours=15)
     as_of_values = pd.Timestamp(as_of) if as_of is not None else default_as_of
@@ -319,9 +321,18 @@ def _build_factor_output(
             "as_of": as_of_values,
             "signal_time": _get_spec(factor_id).formula.signal_time,
             "available_at": available_at_values,
-            "data_availability_policy": _get_spec(factor_id).formula.data_availability_policy,
+            "data_availability_policy": _data_availability_policy(
+                factor_id,
+                level2_available=level2_available,
+            ),
             "factor_definition_hash": factor_definition_hash(_get_spec(factor_id)),
         }
     )
     return validate_factor_output_frame(output.loc[:, FACTOR_OUTPUT_COLUMNS].reset_index(drop=True))
+
+
+def _data_availability_policy(factor_id: str, *, level2_available: bool) -> str:
+    if factor_id == "limit_queue_pressure_proxy":
+        return "level2_required" if level2_available else "fixture_only"
+    return _get_spec(factor_id).formula.data_availability_policy
 

@@ -4,14 +4,14 @@
 
 | Area | Command | Result |
 |---|---|---:|
-| Alpha Foundry full suite | `pytest agent/tests/alpha_foundry -q` | `99 passed in 7.07s` |
-| Security tests | `pytest agent/tests/security -q` | `10 passed, 5 warnings in 1.56s` |
-| Red-team selector | `pytest agent/tests/ -k "security or redteam or attack" -q` | `154 passed, 4723 deselected, 5 warnings in 20.38s` |
+| Alpha Foundry full suite | `pytest agent/tests/alpha_foundry -q` | `101 passed in 11.43s` |
+| Security tests | `pytest agent/tests/security -q` | `13 passed, 5 warnings in 2.56s` |
+| Red-team selector | `pytest agent/tests/ -k "security or redteam or attack" -q` | `157 passed, 4725 deselected, 5 warnings in 17.78s` |
 | Reliability | `pytest agent/tests/reliability -q` | `25 passed in 2.31s` |
 | Research Card | `pytest agent/tests/research_card -q` | `3 passed in 0.51s` |
 | Quant policy | `pytest agent/tests/quant -q` | `25 passed in 0.54s` |
-| Old behavior regression | `pytest agent/tests/ -q --ignore=agent/tests/alpha_foundry` | `4772 passed, 6 skipped, 135 warnings in 190.59s` |
-| Performance smoke | `pytest agent/tests/alpha_foundry/test_performance.py -q` | `2 passed in 2.97s` |
+| Old behavior regression | `pytest agent/tests/ -q --ignore=agent/tests/alpha_foundry` | `4775 passed, 6 skipped, 135 warnings in 383.60s` |
+| Performance smoke | `pytest agent/tests/alpha_foundry/test_performance.py -q` | `2 passed in 2.25s` |
 | OpenAPI contract | `pytest agent/tests/contracts/test_alpha_foundry_openapi_snapshot.py -q` | `3 passed, 5 warnings in 1.42s` |
 | API structure | `python agent/scripts/check_api_structure.py` | `incremental_compatible` |
 | Inventory | `python agent/scripts/dump_alpha_foundry_inventory.py` | passed; `network_calls_performed=false` |

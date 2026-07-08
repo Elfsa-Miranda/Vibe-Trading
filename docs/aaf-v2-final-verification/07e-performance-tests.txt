@@ -1,0 +1,3 @@
+﻿pytest agent/tests/alpha_foundry/test_performance.py -q
+..                                                                       [100%]
+2 passed in 2.25s

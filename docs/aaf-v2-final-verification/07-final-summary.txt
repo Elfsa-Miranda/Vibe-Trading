@@ -1,0 +1,112 @@
+﻿AAF-IRR v2.1 HARDENED Final Acceptance Audit Summary
+Date: 2026-07-08
+Branch: audit/aaf-v21-final-acceptance-redteam
+
+Release Decision: PASS WITH NON-BLOCKING RISKS
+
+Local operator files:
+- AGENTS.MD and execplan.md were read as local instructions only.
+- git ls-files -- AGENTS.MD execplan.md returned no tracked files.
+- git check-ignore keeps AGENTS.MD under .gitignore and execplan.md under .git/info/exclude.
+- No push was performed.
+
+FINDING-001:
+  Phase: A-2-P9 / B / C
+  Severity: BLOCKING
+  File: agent/src/alpha_foundry/forward/store.py
+  Line(s): pre-fix public mutation methods near old lines 64-67; fixed path validation at lines 65-75
+  Observed behavior: ForwardObservationJsonlStore exposed public update/delete methods and stored unresolved relative paths.
+  Required behavior per AGENTS.MD section: Forward Tracking observations must be append-only JSONL; old observations must not be update/delete mutable.
+  Failing test written: agent/tests/security/test_alpha_foundry_attack_surface.py::test_forward_store_has_no_public_update_or_delete_mutation_api and ::test_forward_store_normalizes_relative_paths_before_use.
+  Fix applied: Removed public update/delete methods and normalized store paths with Path.resolve(strict=False) while keeping traversal and symlink rejection.
+  Fix diff: agent/src/alpha_foundry/forward/store.py; agent/tests/alpha_foundry/forward/test_forward_store_append_only.py; agent/examples/alpha_foundry_demos/shared_fixtures/scenarios.py; forward_decay_kill expected snapshot.
+  Re-test result: 07a Alpha Foundry 101 passed; 07b security 13 passed and redteam selector 157 passed.
+  Residual risk: Forward store remains local JSONL paper-tracking infrastructure, not a production database.
+
+FINDING-002:
+  Phase: A-2-P3 / B / C
+  Severity: BLOCKING
+  File: agent/src/alpha_foundry/factors/limit_liquidity.py; agent/src/alpha_foundry/factors/specs/limit_liquidity_specs.yaml
+  Line(s): fixed dynamic policy at limit_liquidity.py lines 334-337; queue spec policy at limit_liquidity_specs.yaml line 172
+  Observed behavior: limit_queue_pressure_proxy without Level-2 data could surface bar_close_derived policy, which was too weak for the final audit standard.
+  Required behavior per AGENTS.MD section: limit_queue_pressure_proxy without Level-2/tick/queue data is exploratory only, must carry proxy_note, and must not claim Level-2 queue alpha.
+  Failing test written: agent/tests/security/test_alpha_foundry_attack_surface.py::test_queue_pressure_proxy_without_level2_is_fixture_only_exploratory.
+  Fix applied: Queue proxy now reports fixture_only when Level-2 is absent and level2_required only when explicit Level-2 inputs are used; metadata remains exploratory and can_claim_level2_queue_alpha=False without Level-2.
+  Fix diff: limit_liquidity.py policy helper and queue YAML spec correction.
+  Re-test result: attack surface + limit factor targeted tests 16 passed; 07a Alpha Foundry 101 passed.
+  Residual risk: EOD queue proxy remains exploratory and must not be marketed as queue-depth alpha.
+
+FINDING-003:
+  Phase: A-2-P7 / B / C
+  Severity: BLOCKING
+  File: agent/src/alpha_foundry/overfit/multiple_testing.py
+  Line(s): 60-63
+  Observed behavior: A selected single trial with a strong result claim and no selection policy was not marked BEST_TRIAL_ONLY.
+  Required behavior per AGENTS.MD section: TrialLedger must be the source of trial counts, and best-trial-only disclosure must hard fail.
+  Failing test written: agent/tests/alpha_foundry/overfit/test_selection_disclosure.py::test_single_selected_trial_without_selection_policy_is_best_trial_only.
+  Fix applied: selected_trial_id with trial_count == 1 and no selection_policy now appends BEST_TRIAL_ONLY.
+  Fix diff: multiple_testing.py and selection disclosure test.
+  Re-test result: overfit targeted tests passed; 07a Alpha Foundry 101 passed.
+  Residual risk: PBO/DSR remain experimental MVP diagnostics and are documented as not pass-gates.
+
+FINDING-004:
+  Phase: A-2-P6 / B / C
+  Severity: BLOCKING
+  File: agent/src/alpha_foundry/diagnostics/controls.py
+  Line(s): 22-48
+  Observed behavior: Placebo controls accepted supplied placebo IC lists but did not provide a deterministic label-permutation control helper.
+  Required behavior per AGENTS.MD section: Factor falsification must use deterministic thresholds and credible placebo/control diagnostics rather than hand-crafted negative fixtures alone.
+  Failing test written: agent/tests/alpha_foundry/diagnostics/test_controls.py::test_placebo_controls_are_generated_by_deterministic_label_permutation.
+  Fix applied: Added permuted_label_rank_ics with deterministic per-date label permutation and seed-stable output.
+  Fix diff: controls.py and new diagnostics test_controls.py.
+  Re-test result: diagnostics targeted tests passed; 07a Alpha Foundry 101 passed.
+  Residual risk: Existing demos still use deterministic fixture placebo values; production research should generate placebo lists through the new helper.
+
+FINDING-005:
+  Phase: D
+  Severity: NON-BLOCKING, FIXED
+  File: agent/src/alpha_foundry/diagnostics/ic.py; agent/src/alpha_foundry/diagnostics/neutralization.py; agent/tests/alpha_foundry/test_performance.py
+  Line(s): ic.py 76-116; neutralization.py 58-64 and 141-166; test_performance.py 55 and 106
+  Observed behavior: Full Alpha Foundry suite intermittently failed falsification performance smoke due to pandas merge/correlation overhead in same-process test context.
+  Required behavior per AGENTS.MD section: Performance smoke must pass or record degraded/perf warning; final acceptance requires reproducible local smoke.
+  Failing test written: Existing agent/tests/alpha_foundry/test_performance.py::test_falsification_performance_smoke failed during 07a.
+  Fix applied: Replaced pandas Series.corr with NumPy correlation, added conservative aligned-key fast paths for IC joins and neutralization joins, added constant-exposure neutralization shortcut equivalent to WLS group means, and isolated performance timing from GC.
+  Fix diff: ic.py, neutralization.py, test_performance.py.
+  Re-test result: 07e performance 2 passed; 07a Alpha Foundry 101 passed.
+  Residual risk: Real-store/nightly performance benchmarking is still future work.
+
+FINDING-006:
+  Phase: A / C
+  Severity: NON-BLOCKING, FIXED
+  File: docs/aaf-v2-final-acceptance.md
+  Line(s): 10 and 77
+  Observed behavior: Final acceptance text still described FactorOutputFrame as six columns and update/delete mutation as rejected API behavior.
+  Required behavior per AGENTS.MD section: FactorOutputFrame is the exact nine-column v2.1 contract; forward tracking must avoid public mutation APIs.
+  Failing test written: Documentation inconsistency found by code-level audit, not an executable product test.
+  Fix applied: Updated final acceptance wording to nine columns and no public update/delete mutation API.
+  Fix diff: docs/aaf-v2-final-acceptance.md.
+  Re-test result: Documentation grep no longer finds stale six-column/update-forbidden wording.
+  Residual risk: Historical verification docs from the prior audit are superseded by 07a-07j and this final summary.
+
+Final Acceptance Outputs:
+- 07a-alpha-foundry-tests.txt: 101 passed.
+- 07b-security-redteam-tests.txt: security 13 passed; redteam selector 157 passed.
+- 07c-reliability-card-tests.txt: reliability 25 passed; research_card 3 passed; quant 25 passed; OpenAPI 3 passed; API structure incremental_compatible.
+- 07d-legacy-regression.txt: 4775 passed, 6 skipped, 135 warnings.
+- 07e-performance-tests.txt: 2 passed.
+- 07f-demo-dryruns.txt: five demo dry-runs snapshot_match.
+- 07g-demo-tests.txt: 4 passed.
+- 07h-frontend-vitest.txt: 28 files passed, 240 tests passed.
+- 07i-frontend-build.txt: build passed with existing Vite chunk-size warning.
+- 07j-supply-chain.txt: pip freeze captured; npm audit found 0 vulnerabilities.
+
+Final Checklist:
+- Blocking findings remaining: 0
+- Write API added for Alpha Foundry: No
+- Live trading capability expanded: No
+- Forward observation update/delete API exposed: No
+- Queue proxy Level-2 overclaim allowed without Level-2: No
+- TrialLedger-derived multiple-testing disclosure enforced: Yes
+- FactorOutputFrame nine-column contract preserved: Yes
+- AGENTS.MD / execplan.md committed: No
+- Remote push performed: No
