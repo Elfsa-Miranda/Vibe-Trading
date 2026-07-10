@@ -212,9 +212,9 @@ class FactorIdentityService:
         try:
             identity = build_factor_spec_identity(formula, semantics, grammar=grammar)
         except FormulaIdentityError as exc:
-            existing = self._existing_terminal(trial_id, candidate_id)
-            if existing is not None:
-                return FactorIdentityAttempt(existing, None, None, exc.error_codes)
+            existing_terminal = self._existing_terminal(trial_id, candidate_id)
+            if existing_terminal is not None:
+                return FactorIdentityAttempt(existing_terminal, None, None, exc.error_codes)
             self._ensure_trial_started(trial_id, run_id, candidate_id)
             self._append_invalid_terminal(trial_id, run_id, exc.error_codes)
             return FactorIdentityAttempt("invalid", None, None, exc.error_codes)
@@ -232,11 +232,11 @@ class FactorIdentityService:
 
         self._ensure_trial_started(trial_id, run_id, candidate_id)
 
-        existing = self.store.query_events(
+        existing_definitions = self.store.query_events(
             event_type="FactorDefinitionRecorded", entity_id=identity.factor_spec_id
         )
-        if existing:
-            origin = str(existing[0].payload["metadata"].get("originating_trial_id", ""))
+        if existing_definitions:
+            origin = str(existing_definitions[0].payload["metadata"].get("originating_trial_id", ""))
             if origin == trial_id:
                 return FactorIdentityAttempt(
                     "recorded",
