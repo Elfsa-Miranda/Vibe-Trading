@@ -116,6 +116,35 @@ def _artifact_list(value: Any, path: str) -> None:
         _string(item["media_type"], f"{path}[{index}].media_type")
 
 
+def _registry_root_list(value: Any, path: str) -> None:
+    if not isinstance(value, (list, tuple)):
+        raise EventValidationError(f"{path} must be a list")
+    seen: set[str] = set()
+    for index, item in enumerate(value):
+        if not isinstance(item, Mapping):
+            raise EventValidationError(f"{path}[{index}] must be an object")
+        expected = {
+            "alpha_id",
+            "status",
+            "expression_id",
+            "legacy_formula_hash",
+        }
+        if set(item) != expected:
+            raise EventValidationError(f"{path}[{index}] has unknown root fields")
+        alpha_id = item["alpha_id"]
+        _string(alpha_id, f"{path}[{index}].alpha_id")
+        if alpha_id in seen:
+            raise EventValidationError(f"{path} contains duplicate alpha_id")
+        seen.add(alpha_id)
+        _enum("canonical_dsl", "legacy_opaque")(item["status"], f"{path}[{index}].status")
+        _nullable_hash(item["expression_id"], f"{path}[{index}].expression_id")
+        _hash(item["legacy_formula_hash"], f"{path}[{index}].legacy_formula_hash")
+        if item["status"] == "canonical_dsl" and item["expression_id"] is None:
+            raise EventValidationError(f"{path}[{index}] canonical root requires expression_id")
+        if item["status"] == "legacy_opaque" and item["expression_id"] is not None:
+            raise EventValidationError(f"{path}[{index}] opaque root cannot claim expression_id")
+
+
 def _enum(*values: str) -> Validator:
     allowed = frozenset(values)
 
@@ -173,6 +202,16 @@ _PAYLOAD_SPECS: dict[str, PayloadSpec] = {
             "grammar_hash": _hash,
             "metadata": _mapping,
             "artifact_refs": _artifact_list,
+        },
+    ),
+    "RegistryBootstrapRecorded": PayloadSpec(
+        "registry_bootstrap_recorded.v1",
+        {
+            "snapshot_id": _string,
+            "registry_snapshot_hash": _hash,
+            "registry_code_hash": _hash,
+            "grammar_hash": _hash,
+            "roots": _registry_root_list,
         },
     ),
     "DerivationRecorded": PayloadSpec(

@@ -397,6 +397,7 @@ class ResearchEventStore:
         identity_fields = {
             "TrialStarted": "trial_id",
             "FactorDefinitionRecorded": "factor_spec_id",
+            "RegistryBootstrapRecorded": "snapshot_id",
             "DerivationRecorded": "child_factor_spec_id",
             "GenerationFailureRecorded": "trial_id",
             "EvaluationRecorded": "evaluation_id",
@@ -440,6 +441,40 @@ class ResearchEventStore:
             ).fetchone()
             if terminal is None:
                 raise EventTransitionError("derivation references no prior terminal trial event")
+            child = str(payload["child_factor_spec_id"])
+            parents = [str(parent) for parent in payload["parent_factor_spec_ids"]]
+            if child in parents:
+                raise EventTransitionError("derivation cannot contain a self-edge")
+            if len(parents) != len(set(parents)):
+                raise EventTransitionError("derivation cannot contain duplicate parents")
+            definition_ids = {child, *parents}
+            known_definitions = {
+                factor_id
+                for factor_id in definition_ids
+                if conn.execute(
+                    """
+                    SELECT 1 FROM research_events
+                    WHERE event_type = 'FactorDefinitionRecorded' AND entity_id = ?
+                    """,
+                    (factor_id,),
+                ).fetchone()
+                is not None
+            }
+            if known_definitions != definition_ids:
+                raise EventTransitionError("derivation references no prior factor definition")
+            prior_rows = conn.execute(
+                "SELECT payload FROM research_events WHERE event_type = 'DerivationRecorded' ORDER BY seq ASC"
+            ).fetchall()
+            graph: dict[str, set[str]] = {}
+            for row in prior_rows:
+                prior = json.loads(str(row["payload"]))
+                prior_child = str(prior["child_factor_spec_id"])
+                if prior_child == child:
+                    raise EventTransitionError("multiple lineage derivations for one child are ambiguous")
+                for parent in prior["parent_factor_spec_ids"]:
+                    graph.setdefault(str(parent), set()).add(prior_child)
+            if any(self._graph_has_path(graph, child, parent) for parent in parents):
+                raise EventTransitionError("derivation creates a lineage cycle")
             return
         if event_type == "FalsificationResultRecorded":
             contract = conn.execute(
@@ -697,6 +732,20 @@ class ResearchEventStore:
                 if str(payload["plan_id"]) not in plans:
                     return False
         return True
+
+    @staticmethod
+    def _graph_has_path(graph: Mapping[str, set[str]], start: str, target: str) -> bool:
+        pending = [start]
+        seen: set[str] = set()
+        while pending:
+            current = pending.pop()
+            if current == target:
+                return True
+            if current in seen:
+                continue
+            seen.add(current)
+            pending.extend(graph.get(current, ()))
+        return False
 
     def replay(self) -> ReplayState:
         try:

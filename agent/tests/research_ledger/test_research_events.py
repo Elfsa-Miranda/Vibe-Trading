@@ -155,6 +155,7 @@ def test_closed_payload_registry_covers_every_required_event_type() -> None:
     assert set(PAYLOAD_SPECS) == {
         "TrialStarted",
         "FactorDefinitionRecorded",
+        "RegistryBootstrapRecorded",
         "DerivationRecorded",
         "GenerationFailureRecorded",
         "EvaluationRecorded",
@@ -184,8 +185,22 @@ def test_every_registered_payload_schema_validates_a_complete_production_shape()
             "objective": "rank_ic",
             "started_at": timestamp,
         },
-        "FactorDefinitionRecorded": _factor_payload(),
-        "DerivationRecorded": {
+            "FactorDefinitionRecorded": _factor_payload(),
+            "RegistryBootstrapRecorded": {
+                "snapshot_id": "registry-1",
+                "registry_snapshot_hash": digest,
+                "registry_code_hash": digest,
+                "grammar_hash": digest,
+                "roots": [
+                    {
+                        "alpha_id": "fixture_alpha",
+                        "status": "legacy_opaque",
+                        "expression_id": None,
+                        "legacy_formula_hash": digest,
+                    }
+                ],
+            },
+            "DerivationRecorded": {
             "child_factor_spec_id": "child-1",
             "parent_factor_spec_ids": ["parent-1", "parent-2"],
             "trial_terminal_event_hash": digest,
