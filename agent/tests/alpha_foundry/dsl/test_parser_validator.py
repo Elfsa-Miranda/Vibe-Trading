@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from src.alpha_foundry.dsl.grammar import DEFAULT_GRAMMAR, GrammarDefinition
 from src.alpha_foundry.dsl.parser import FormulaParser
 from src.alpha_foundry.dsl.validator import validate_expression
 
@@ -63,3 +64,16 @@ def test_large_window_rejected() -> None:
 def test_parser_rejects_non_call_syntax() -> None:
     with pytest.raises(ValueError, match="unsupported formula syntax"):
         FormulaParser().parse("close + 1")
+
+
+def test_parser_has_a_hard_recursion_ceiling_before_policy_validation() -> None:
+    grammar = GrammarDefinition.create(
+        semantic_version="parser-ceiling-test", operators=DEFAULT_GRAMMAR.operators,
+        allowed_fields=DEFAULT_GRAMMAR.allowed_fields,
+        operator_aliases=DEFAULT_GRAMMAR.operator_aliases,
+        field_aliases=DEFAULT_GRAMMAR.field_aliases,
+        max_formula_chars=4096, max_ast_depth=64, max_ast_nodes=4096, max_window=252,
+    )
+    formula = "neg(" * 129 + "close" + ")" * 129
+    with pytest.raises(ValueError, match="recursion ceiling"):
+        FormulaParser(grammar).parse(formula)

@@ -214,6 +214,7 @@ class ResearchEventStore:
         self._validate_payload_entity(draft, payload)
         self._validate_artifacts(payload)
         self._validate_external_process_evidence(draft.event_type, payload)
+        self._validate_factor_definition_identity(draft.event_type, payload)
         payload_hash = canonical_json_hash(payload)
         last_error: Exception | None = None
 
@@ -504,6 +505,24 @@ class ResearchEventStore:
             raise EventValidationError("process outcome v2 scorecard evidence is invalid") from exc
         if utility != float(payload["observed_validation_utility"]):
             raise EventValidationError("process outcome v2 utility was not deterministically rebuilt")
+
+    @staticmethod
+    def _validate_factor_definition_identity(
+        event_type: str, payload: Mapping[str, Any]
+    ) -> None:
+        metadata = payload.get("metadata")
+        if (
+            event_type != "FactorDefinitionRecorded"
+            or not isinstance(metadata, Mapping)
+            or "identity_schema_version" not in metadata
+        ):
+            return
+        from src.alpha_foundry.dsl.identity import validate_factor_definition_payload
+
+        try:
+            validate_factor_definition_payload(payload)
+        except (TypeError, ValueError) as exc:
+            raise EventValidationError("factor definition identity is not reproducible") from exc
 
     def _validate_transition(
         self,

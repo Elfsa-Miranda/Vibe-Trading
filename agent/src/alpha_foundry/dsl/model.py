@@ -5,24 +5,39 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 
+def _normalize_decimal_token(token: str) -> str:
+    if not isinstance(token, str) or not token:
+        raise ValueError("invalid numeric literal")
+    try:
+        value = Decimal(token)
+    except InvalidOperation as exc:
+        raise ValueError("invalid numeric literal") from exc
+    if not value.is_finite():
+        raise ValueError("non-finite numeric literal")
+    if value == 0:
+        return "0"
+    normalized = value.normalize()
+    if normalized == normalized.to_integral_value():
+        return str(int(normalized))
+    return format(normalized, "f").rstrip("0").rstrip(".")
+
 @dataclass(frozen=True)
 class NumberLiteral:
     canonical: str
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.canonical, str) or not self.canonical:
+            raise ValueError("numeric literal must be a non-empty canonical string")
+        try:
+            normalized = _normalize_decimal_token(self.canonical)
+        except ValueError as exc:
+            raise ValueError("numeric literal is not finite canonical decimal") from exc
+        if normalized != self.canonical:
+            raise ValueError("numeric literal is not in canonical form")
+
     @classmethod
     def from_token(cls, token: str) -> "NumberLiteral":
-        try:
-            value = Decimal(token)
-        except InvalidOperation as exc:
-            raise ValueError("invalid numeric literal") from exc
-        if not value.is_finite():
-            raise ValueError("non-finite numeric literal")
-        if value == 0:
-            return cls("0")
-        normalized = value.normalize()
-        if normalized == normalized.to_integral_value():
-            return cls(str(int(normalized)))
-        return cls(format(normalized, "f").rstrip("0").rstrip("."))
+        return cls(_normalize_decimal_token(token))
 
     @property
     def decimal(self) -> Decimal:
@@ -88,4 +103,4 @@ class ASTNode:
 @dataclass(frozen=True)
 class ValidationResult:
     ok: bool
-    errors: list[str]
+    errors: tuple[str, ...]
