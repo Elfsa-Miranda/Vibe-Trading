@@ -399,6 +399,8 @@ class ResearchEventStore:
             "FactorDefinitionRecorded": "factor_spec_id",
             "RegistryBootstrapRecorded": "snapshot_id",
             "DerivationRecorded": "child_factor_spec_id",
+            "ProcessActionFrozen": "action_id",
+            "ProcessOutcomeRecorded": "outcome_id",
             "GenerationFailureRecorded": "trial_id",
             "EvaluationRecorded": "evaluation_id",
             "TrialTerminated": "trial_id",
@@ -475,6 +477,32 @@ class ResearchEventStore:
                     graph.setdefault(str(parent), set()).add(prior_child)
             if any(self._graph_has_path(graph, child, parent) for parent in parents):
                 raise EventTransitionError("derivation creates a lineage cycle")
+            return
+        if event_type == "ProcessActionFrozen":
+            started = conn.execute(
+                "SELECT 1 FROM research_events WHERE event_type = 'TrialStarted' AND entity_id = ?",
+                (payload["trial_id"],),
+            ).fetchone()
+            if started is None:
+                raise EventTransitionError("process action references no prior trial start")
+            return
+        if event_type == "ProcessOutcomeRecorded":
+            action = conn.execute(
+                "SELECT payload FROM research_events WHERE event_type = 'ProcessActionFrozen' AND entity_id = ?",
+                (payload["action_id"],),
+            ).fetchone()
+            terminal = conn.execute(
+                "SELECT payload FROM research_events WHERE event_type = 'TrialTerminated' AND event_hash = ?",
+                (payload["terminal_event_hash"],),
+            ).fetchone()
+            if action is None or terminal is None:
+                raise EventTransitionError("process outcome lacks prior action or terminal evidence")
+            if json.loads(action["payload"])["trial_id"] != payload["trial_id"]:
+                raise EventTransitionError("process outcome trial does not match frozen action")
+            if json.loads(terminal["payload"])["trial_id"] != payload["trial_id"]:
+                raise EventTransitionError("process outcome trial does not match terminal evidence")
+            if payload["child_factor_spec_id"] is None and payload["ast_diff"] is not None:
+                raise EventValidationError("invalid process outcome cannot carry an AST diff")
             return
         if event_type == "FalsificationResultRecorded":
             contract = conn.execute(
