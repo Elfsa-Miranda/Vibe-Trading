@@ -78,6 +78,12 @@ def _positive_integer(value: Any, path: str) -> None:
         raise EventValidationError(f"{path} must be positive")
 
 
+def _candidate_budget(value: Any, path: str) -> None:
+    _positive_integer(value, path)
+    if value > 100_000:
+        raise EventValidationError(f"{path} exceeds the process-memory resource limit")
+
+
 def _probability(value: Any, path: str) -> None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise EventValidationError(f"{path} must be numeric")
@@ -231,6 +237,7 @@ class PayloadSpec:
 
 
 _DATA_SCOPE = _enum("train", "valid", "train_valid", "test", "final_test", "forward", "demo_fixture")
+_DISCOVERY_EVALUATION_SCOPE = _enum("valid", "train_valid")
 _DECISION = _enum(
     "reject",
     "research_only",
@@ -310,6 +317,48 @@ _PAYLOAD_SPECS: dict[str, PayloadSpec] = {
             "ast_diff": _nullable_mapping,
             "available_at": _timestamp,
             "policy_hash": _hash,
+        },
+    ),
+    "ProcessActionFrozenV2": PayloadSpec(
+        "process_action_frozen.v2",
+        {
+            "action_id": _string,
+            "trial_id": _string,
+            "parent_factor_spec_id": _string,
+            "candidate_id": _string,
+            "base_expected_utility": _finite_number,
+            "eligible_event_watermark": _hash,
+            "policy_hash": _hash,
+            "utility_policy_hash": _hash,
+            "data_snapshot_hash": _hash,
+            "regime_config_hash": _nullable_hash,
+            "run_group_id": _string,
+            "seed": _integer,
+            "candidate_budget": _candidate_budget,
+            "frozen_at": _timestamp,
+        },
+    ),
+    "ProcessOutcomeRecordedV2": PayloadSpec(
+        "process_outcome_recorded.v2",
+        {
+            "outcome_id": _string,
+            "action_id": _string,
+            "trial_id": _string,
+            "terminal_event_hash": _hash,
+            "evaluation_event_hash": _hash,
+            "derivation_event_hash": _hash,
+            "data_scope": _DISCOVERY_EVALUATION_SCOPE,
+            "child_factor_spec_id": _string,
+            "observed_validation_utility": _finite_number,
+            "scorecard_hash": _hash,
+            "utility_policy_hash": _hash,
+            "ast_diff": _mapping,
+            "ast_diff_hash": _hash,
+            "available_at": _timestamp,
+            "policy_hash": _hash,
+            "data_snapshot_hash": _hash,
+            "regime_config_hash": _nullable_hash,
+            "run_group_id": _string,
         },
     ),
     "GenerationFailureRecorded": PayloadSpec(

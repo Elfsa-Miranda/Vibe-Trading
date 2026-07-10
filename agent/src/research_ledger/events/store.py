@@ -212,6 +212,7 @@ class ResearchEventStore:
         )
         self._validate_payload_entity(draft, payload)
         self._validate_artifacts(payload)
+        self._validate_external_process_evidence(draft.event_type, payload)
         payload_hash = canonical_json_hash(payload)
         last_error: Exception | None = None
 
@@ -402,6 +403,8 @@ class ResearchEventStore:
             "DerivationRecorded": "child_factor_spec_id",
             "ProcessActionFrozen": "action_id",
             "ProcessOutcomeRecorded": "outcome_id",
+            "ProcessActionFrozenV2": "action_id",
+            "ProcessOutcomeRecordedV2": "outcome_id",
             "GenerationFailureRecorded": "trial_id",
             "EvaluationRecorded": "evaluation_id",
             "TrialTerminated": "trial_id",
@@ -432,6 +435,49 @@ class ResearchEventStore:
             self.artifact_root,
             references,
         )
+
+    def _validate_external_process_evidence(
+        self,
+        event_type: str,
+        payload: Mapping[str, Any],
+    ) -> None:
+        """Rebuild utility before the write transaction; never do file IO under lock."""
+        if event_type != "ProcessOutcomeRecordedV2":
+            return
+        actions = self.query_events(
+            event_type="ProcessActionFrozenV2", entity_id=str(payload["action_id"])
+        )
+        evaluations = [
+            event
+            for event in self.query_events(event_type="EvaluationRecorded")
+            if event.event_hash == payload["evaluation_event_hash"]
+        ]
+        if len(actions) != 1 or len(evaluations) != 1:
+            raise EventTransitionError("process outcome v2 lacks frozen external evidence")
+        action = actions[0]
+        evaluation = evaluations[0]
+        references = [
+            ref
+            for ref in evaluation.payload["artifact_refs"]
+            if ref["artifact_hash"] == evaluation.payload["scorecard_hash"]
+            and ref["media_type"] == "application/vnd.vibe.alpha-quality-scorecard+json"
+        ]
+        if len(references) != 1:
+            raise EventValidationError("process outcome v2 requires one scorecard artifact")
+        reference = validate_artifact_references(self.artifact_root, references)[0]
+        path = self.artifact_root.joinpath(*PurePosixPath(reference["relative_path"]).parts)
+        try:
+            from src.alpha_foundry.memory.utility import mean_valid_rank_icir_utility
+
+            utility = mean_valid_rank_icir_utility(
+                path,
+                expected_factor_spec_id=str(payload["child_factor_spec_id"]),
+                expected_data_snapshot_hash=str(action.payload["data_snapshot_hash"]),
+            )
+        except ValueError as exc:
+            raise EventValidationError("process outcome v2 scorecard evidence is invalid") from exc
+        if utility != float(payload["observed_validation_utility"]):
+            raise EventValidationError("process outcome v2 utility was not deterministically rebuilt")
 
     def _validate_transition(
         self,
@@ -492,6 +538,12 @@ class ResearchEventStore:
             ).fetchone()
             if started is None:
                 raise EventTransitionError("process action references no prior trial start")
+            return
+        if event_type == "ProcessActionFrozenV2":
+            self._validate_process_action_v2_transition(conn, draft, payload)
+            return
+        if event_type == "ProcessOutcomeRecordedV2":
+            self._validate_process_outcome_v2_transition(conn, draft, payload)
             return
         if event_type == "ProcessOutcomeRecorded":
             action = conn.execute(
@@ -594,6 +646,150 @@ class ResearchEventStore:
             ).fetchone()
             if evaluation is None or json.loads(evaluation["payload"])["trial_id"] != trial_id:
                 raise EventTransitionError("successful trial evaluation evidence is missing or mismatched")
+
+    @staticmethod
+    def _validate_process_action_v2_transition(
+        conn: sqlite3.Connection,
+        draft: EventDraft,
+        payload: Mapping[str, Any],
+    ) -> None:
+        started = conn.execute(
+            "SELECT seq, run_id, payload FROM research_events WHERE event_type = 'TrialStarted' AND entity_id = ?",
+            (payload["trial_id"],),
+        ).fetchone()
+        if started is None:
+            raise EventTransitionError("process action v2 references no prior trial start")
+        started_payload = json.loads(str(started["payload"]))
+        if started_payload["candidate_id"] != payload["candidate_id"] or str(started["run_id"]) != draft.run_id:
+            raise EventTransitionError("process action v2 does not match its frozen trial")
+        parent = conn.execute(
+            "SELECT 1 FROM research_events WHERE event_type = 'FactorDefinitionRecorded' AND entity_id = ?",
+            (payload["parent_factor_spec_id"],),
+        ).fetchone()
+        if parent is None:
+            raise EventTransitionError("process action v2 has no prior parent definition")
+        watermark = conn.execute(
+            "SELECT seq FROM research_events WHERE event_hash = ?",
+            (payload["eligible_event_watermark"],),
+        ).fetchone()
+        if watermark is None or int(watermark["seq"]) >= int(started["seq"]):
+            raise EventTransitionError("process action v2 watermark must exist before its trial")
+        definitions = conn.execute(
+            "SELECT payload FROM research_events WHERE event_type = 'FactorDefinitionRecorded' ORDER BY seq ASC"
+        ).fetchall()
+        if any(
+            str(json.loads(str(row["payload"]))["metadata"].get("originating_trial_id", ""))
+            == payload["trial_id"]
+            for row in definitions
+        ):
+            raise EventTransitionError("process action v2 must be frozen before child generation")
+        prior_actions = conn.execute(
+            "SELECT payload FROM research_events WHERE event_type = 'ProcessActionFrozenV2' ORDER BY seq ASC"
+        ).fetchall()
+        if any(
+            json.loads(str(row["payload"]))["trial_id"] == payload["trial_id"]
+            for row in prior_actions
+        ):
+            raise EventTransitionError("trial already has a frozen process action v2")
+
+    @staticmethod
+    def _validate_process_outcome_v2_transition(
+        conn: sqlite3.Connection,
+        draft: EventDraft,
+        payload: Mapping[str, Any],
+    ) -> None:
+        action_row = conn.execute(
+            "SELECT run_id, payload FROM research_events WHERE event_type = 'ProcessActionFrozenV2' AND entity_id = ?",
+            (payload["action_id"],),
+        ).fetchone()
+        if action_row is None:
+            raise EventTransitionError("process outcome v2 has no prior frozen action")
+        prior_outcomes = conn.execute(
+            "SELECT payload FROM research_events WHERE event_type = 'ProcessOutcomeRecordedV2' ORDER BY seq ASC"
+        ).fetchall()
+        if any(
+            json.loads(str(row["payload"]))["action_id"] == payload["action_id"]
+            for row in prior_outcomes
+        ):
+            raise EventTransitionError("process action v2 already has a terminal outcome")
+        action = json.loads(str(action_row["payload"]))
+        matching_fields = (
+            "trial_id", "policy_hash", "utility_policy_hash", "data_snapshot_hash",
+            "regime_config_hash", "run_group_id",
+        )
+        if any(action[name] != payload[name] for name in matching_fields) or str(action_row["run_id"]) != draft.run_id:
+            raise EventTransitionError("process outcome v2 does not match its frozen action")
+
+        terminal_row = conn.execute(
+            "SELECT payload FROM research_events WHERE event_type = 'TrialTerminated' AND event_hash = ?",
+            (payload["terminal_event_hash"],),
+        ).fetchone()
+        evaluation_row = conn.execute(
+            "SELECT payload FROM research_events WHERE event_type = 'EvaluationRecorded' AND event_hash = ?",
+            (payload["evaluation_event_hash"],),
+        ).fetchone()
+        derivation_row = conn.execute(
+            "SELECT payload FROM research_events WHERE event_type = 'DerivationRecorded' AND event_hash = ?",
+            (payload["derivation_event_hash"],),
+        ).fetchone()
+        if terminal_row is None or evaluation_row is None or derivation_row is None:
+            raise EventTransitionError("process outcome v2 lacks terminal, evaluation, or derivation evidence")
+        terminal = json.loads(str(terminal_row["payload"]))
+        evaluation = json.loads(str(evaluation_row["payload"]))
+        derivation = json.loads(str(derivation_row["payload"]))
+        if terminal["trial_id"] != payload["trial_id"] or terminal["status"] not in {"success", "reject"}:
+            raise EventTransitionError("process outcome v2 requires an evaluated terminal trial")
+        if terminal["status"] == "success" and terminal["evaluation_event_hash"] != payload["evaluation_event_hash"]:
+            raise EventTransitionError("successful process outcome v2 cites another evaluation")
+        if (
+            evaluation["trial_id"] != payload["trial_id"]
+            or evaluation["factor_spec_id"] != payload["child_factor_spec_id"]
+            or evaluation["data_scope"] != payload["data_scope"]
+            or evaluation["scorecard_hash"] != payload["scorecard_hash"]
+        ):
+            raise EventTransitionError("process outcome v2 evaluation binding is mismatched")
+        if not any(
+            ref["artifact_hash"] == payload["scorecard_hash"]
+            and ref["media_type"] == "application/vnd.vibe.alpha-quality-scorecard+json"
+            for ref in evaluation["artifact_refs"]
+        ):
+            raise EventTransitionError("process outcome v2 requires its immutable scorecard artifact")
+        if (
+            derivation["child_factor_spec_id"] != payload["child_factor_spec_id"]
+            or derivation["trial_terminal_event_hash"] != payload["terminal_event_hash"]
+            or action["parent_factor_spec_id"] not in derivation["parent_factor_spec_ids"]
+        ):
+            raise EventTransitionError("process outcome v2 derivation binding is mismatched")
+
+        definitions: dict[str, dict[str, Any]] = {}
+        for factor_id in (action["parent_factor_spec_id"], payload["child_factor_spec_id"]):
+            row = conn.execute(
+                "SELECT payload FROM research_events WHERE event_type = 'FactorDefinitionRecorded' AND entity_id = ?",
+                (factor_id,),
+            ).fetchone()
+            if row is None:
+                raise EventTransitionError("process outcome v2 has no canonical factor definition")
+            definitions[str(factor_id)] = json.loads(str(row["payload"]))
+        parent_definition = definitions[str(action["parent_factor_spec_id"])]
+        child_definition = definitions[str(payload["child_factor_spec_id"])]
+        try:
+            from src.alpha_foundry.dsl.diff import ast_diff_from_dict
+
+            diff = ast_diff_from_dict(
+                payload["ast_diff"],
+                parent_ast=parent_definition["metadata"]["canonical_ast"],
+                child_ast=child_definition["metadata"]["canonical_ast"],
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise EventTransitionError("process outcome v2 contains an invalid canonical AST diff") from exc
+        if (
+            diff.parent_expression_id != parent_definition["expression_id"]
+            or diff.child_expression_id != child_definition["expression_id"]
+            or diff.grammar_version != child_definition["grammar_version"]
+            or diff.grammar_hash != child_definition["grammar_hash"]
+            or canonical_json_hash(diff.to_dict()) != payload["ast_diff_hash"]
+        ):
+            raise EventTransitionError("process outcome v2 AST identity binding is mismatched")
 
     @staticmethod
     def _validate_complement_evidence_transition(

@@ -215,7 +215,7 @@ class FactorIdentityService:
             existing = self._existing_terminal(trial_id, candidate_id)
             if existing is not None:
                 return FactorIdentityAttempt(existing, None, None, exc.error_codes)
-            self._append_trial_started(trial_id, run_id, candidate_id)
+            self._ensure_trial_started(trial_id, run_id, candidate_id)
             self._append_invalid_terminal(trial_id, run_id, exc.error_codes)
             return FactorIdentityAttempt("invalid", None, None, exc.error_codes)
 
@@ -230,7 +230,7 @@ class FactorIdentityService:
         ) == trial_id:
             return FactorIdentityAttempt("recorded", identity.factor_spec_id, identity.expression.expression_id, expression=identity.expression)
 
-        self._append_trial_started(trial_id, run_id, candidate_id)
+        self._ensure_trial_started(trial_id, run_id, candidate_id)
 
         existing = self.store.query_events(
             event_type="FactorDefinitionRecorded", entity_id=identity.factor_spec_id
@@ -317,6 +317,17 @@ class FactorIdentityService:
                 },
             )
         )
+
+    def _ensure_trial_started(self, trial_id: str, run_id: str, candidate_id: str) -> None:
+        starts = self.store.query_events(event_type="TrialStarted", entity_id=trial_id)
+        if not starts:
+            self._append_trial_started(trial_id, run_id, candidate_id)
+            return
+        start = starts[0]
+        if start.run_id != run_id or str(start.payload["candidate_id"]) != candidate_id:
+            raise ValueError("prestarted trial does not match candidate or run")
+        if self.store.query_events(event_type="TrialTerminated", entity_id=trial_id):
+            raise ValueError("prestarted trial is already terminal")
 
     def _append_invalid_terminal(self, trial_id: str, run_id: str, codes: tuple[str, ...]) -> None:
         failure_code = codes[0] if codes else "INVALID_FORMULA"
