@@ -12,6 +12,7 @@ from src.alpha_foundry.dag.model import (
     FactorNode,
     RegistryRootNode,
 )
+from src.alpha_foundry.dsl.identity import validate_factor_definition_payload
 from src.alpha_quality.flags import ResolvedAGSFlags
 from src.research_ledger.events import ResearchEventEnvelope
 from src.research_ledger.hash_utils import canonical_json_hash
@@ -72,6 +73,10 @@ class FactorDAGProjector:
     @staticmethod
     def _apply_definition(nodes: dict[str, FactorNode], event: ResearchEventEnvelope) -> None:
         payload = event.payload
+        try:
+            validate_factor_definition_payload(payload)
+        except (TypeError, ValueError) as exc:
+            raise FactorDAGError("factor definition identity is not reproducible") from exc
         factor_spec_id = str(payload["factor_spec_id"])
         node = FactorNode(
             factor_spec_id=factor_spec_id,

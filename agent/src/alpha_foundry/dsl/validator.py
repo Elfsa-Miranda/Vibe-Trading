@@ -60,6 +60,8 @@ def validate_expression(
     grammar: GrammarDefinition = DEFAULT_GRAMMAR,
 ) -> ValidationResult:
     errors: list[str] = []
+    if not isinstance(node, ASTNode):
+        return ValidationResult(ok=False, errors=("AST_NODE_INVALID",))
     if node.depth > grammar.max_ast_depth:
         errors.append("AST_DEPTH_EXCEEDED")
     if node.node_count > grammar.max_ast_nodes:
@@ -73,7 +75,7 @@ def validate_expression(
         if field not in grammar.allowed_fields:
             errors.append("FIELD_NOT_ALLOWED")
     _check_signatures(node, grammar, errors)
-    return ValidationResult(ok=not errors, errors=sorted(set(errors)))
+    return ValidationResult(ok=not errors, errors=tuple(sorted(set(errors))))
 
 
 def _check_signatures(
@@ -81,7 +83,26 @@ def _check_signatures(
     grammar: GrammarDefinition,
     errors: list[str],
 ) -> None:
+    if not isinstance(node.op, str) or not node.op:
+        errors.append("AST_NODE_INVALID")
+        return
+    if not isinstance(node.args, tuple):
+        errors.append("AST_NODE_INVALID")
+        return
+    if node.op == "field":
+        if node.args or not isinstance(node.value, str) or not node.value:
+            errors.append("AST_NODE_INVALID")
+            return
+        if _is_lookahead_field(node.value):
+            errors.append("LOOKAHEAD_DETECTED")
+        if node.value not in grammar.allowed_fields:
+            errors.append("FIELD_NOT_ALLOWED")
+        return
+    if node.value is not None:
+        errors.append("AST_NODE_INVALID")
     spec = grammar.operators.get(node.op)
+    if spec is None:
+        errors.append("OPERATOR_NOT_ALLOWED")
     if spec is not None:
         if len(node.args) != len(spec.argument_kinds):
             errors.append("ARGUMENT_COUNT_INVALID")
@@ -115,6 +136,8 @@ def _check_signatures(
     for arg in node.args:
         if isinstance(arg, ASTNode):
             _check_signatures(arg, grammar, errors)
+        elif not isinstance(arg, NumberLiteral):
+            errors.append("AST_NODE_INVALID")
 
 
 def _is_lookahead_field(field: str) -> bool:

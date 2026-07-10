@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from src.alpha_foundry.dsl.identity import FactorSpecSemantics, FactorIdentityService
+from src.alpha_foundry.dsl.canonical import thaw_canonical_ast
 from src.alpha_quality.flags import ResolvedAGSFlags
-from src.research_ledger.events import ResearchEventStore
+from src.research_ledger.events import EventDraft, EventValidationError, ResearchEventStore
 from src.research_ledger.hash_utils import canonical_json_hash
 
 
@@ -116,3 +119,34 @@ def test_definition_recording_retry_is_idempotent_not_a_duplicate(tmp_path: Path
     assert len(store.query_events(event_type="TrialStarted")) == 1
     assert len(store.query_events(event_type="FactorDefinitionRecorded")) == 1
     assert store.query_events(event_type="TrialTerminated") == []
+
+
+def test_definition_hashes_are_rebuilt_at_event_boundary(tmp_path: Path) -> None:
+    service, store = _service(tmp_path)
+    result = service.record_attempt(
+        trial_id="trial-authentic", run_id="run-1", candidate_id="candidate-authentic",
+        formula="rank(close)", semantics=_semantics(),
+    )
+    authentic = store.query_events(event_type="FactorDefinitionRecorded")[0]
+    tampered = thaw_canonical_ast(authentic.payload)
+    tampered["expression_id"] = "sha256:" + "0" * 64
+
+    with pytest.raises(EventValidationError, match="not reproducible"):
+        store.append_event(
+            EventDraft(
+                event_type="FactorDefinitionRecorded", entity_id=result.factor_spec_id or "missing",
+                run_id="run-tampered", payload_schema_version="factor_definition_recorded.v1",
+                payload=tampered,
+            )
+        )
+
+
+def test_identity_service_requires_the_complete_capability_chain(tmp_path: Path) -> None:
+    store = ResearchEventStore(
+        tmp_path / "research.sqlite", artifact_root=tmp_path / "artifacts",
+        flags=ResolvedAGSFlags.from_settings({
+            "VIBE_TRADING_AGS_ENABLED": "1", "VIBE_TRADING_RESEARCH_EVENTS": "1",
+        }), code_version="identity-test-v1",
+    )
+    with pytest.raises(RuntimeError, match="disabled"):
+        FactorIdentityService(store=store, flags=store.flags)

@@ -4,6 +4,13 @@ from src.alpha_foundry.dsl.grammar import DEFAULT_GRAMMAR, GrammarDefinition
 from src.alpha_foundry.dsl.model import ASTNode, NumberLiteral
 
 MAX_FORMULA_CHARS = DEFAULT_GRAMMAR.max_formula_chars
+_PARSER_RECURSION_CEILING = 128
+
+
+class FormulaParseError(ValueError):
+    def __init__(self, message: str, *, error_code: str = "INVALID_SYNTAX") -> None:
+        self.error_code = error_code
+        super().__init__(message)
 
 
 class FormulaParser:
@@ -12,7 +19,9 @@ class FormulaParser:
 
     def parse(self, text: str) -> ASTNode:
         if len(text) > self.grammar.max_formula_chars:
-            raise ValueError("formula exceeds maximum length")
+            raise FormulaParseError(
+                "formula exceeds maximum length", error_code="FORMULA_LENGTH_EXCEEDED"
+            )
         parser = _Parser(text, self.grammar)
         parsed = parser.parse_expr()
         parser.skip_ws()
@@ -31,25 +40,34 @@ class _Parser:
         self.text = text
         self.grammar = grammar
         self.pos = 0
+        self.depth = 0
 
     def skip_ws(self) -> None:
         while self.pos < len(self.text) and self.text[self.pos].isspace():
             self.pos += 1
 
     def parse_expr(self) -> ASTNode | NumberLiteral:
-        self.skip_ws()
-        if self.pos >= len(self.text):
-            raise ValueError("unexpected end of formula")
-        char = self.text[self.pos]
-        if char == "-" or char.isdigit():
-            return self.parse_number()
-        ident = self.parse_ident()
-        self.skip_ws()
-        if self.pos < len(self.text) and self.text[self.pos] == "(":
-            self.pos += 1
-            args = self.parse_args()
-            return ASTNode(op=self.grammar.canonical_operator(ident), args=tuple(args))
-        return ASTNode(op="field", value=self.grammar.canonical_field(ident))
+        self.depth += 1
+        try:
+            if self.depth > _PARSER_RECURSION_CEILING:
+                raise FormulaParseError(
+                    "AST exceeds parser recursion ceiling", error_code="AST_DEPTH_EXCEEDED"
+                )
+            self.skip_ws()
+            if self.pos >= len(self.text):
+                raise ValueError("unexpected end of formula")
+            char = self.text[self.pos]
+            if char == "-" or char.isdigit():
+                return self.parse_number()
+            ident = self.parse_ident()
+            self.skip_ws()
+            if self.pos < len(self.text) and self.text[self.pos] == "(":
+                self.pos += 1
+                args = self.parse_args()
+                return ASTNode(op=self.grammar.canonical_operator(ident), args=tuple(args))
+            return ASTNode(op="field", value=self.grammar.canonical_field(ident))
+        finally:
+            self.depth -= 1
 
     def parse_args(self) -> list[ASTNode | NumberLiteral]:
         args: list[ASTNode | NumberLiteral] = []

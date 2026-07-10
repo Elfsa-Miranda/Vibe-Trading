@@ -14,6 +14,7 @@ from typing import Any
 
 from src.alpha_foundry.dsl.grammar import DEFAULT_GRAMMAR, GrammarDefinition
 from src.alpha_foundry.dsl.model import ASTNode, NumberLiteral
+from src.alpha_foundry.dsl.validator import validate_expression
 from src.research_ledger.hash_utils import canonical_json
 
 
@@ -44,9 +45,18 @@ def canonicalize_ast(
 ) -> CanonicalAST:
     if isinstance(node, NumberLiteral):
         return _freeze({"kind": "number", "value": node.canonical})
+    validation = validate_expression(node, grammar=grammar)
+    if not validation.ok:
+        raise ValueError("invalid AST: " + ",".join(validation.errors))
+    return _canonicalize_validated(node, grammar=grammar)
+
+
+def _canonicalize_validated(node: ASTNode | NumberLiteral, *, grammar: GrammarDefinition) -> CanonicalAST:
+    if isinstance(node, NumberLiteral):
+        return _freeze({"kind": "number", "value": node.canonical})
     if node.op == "field":
-        return _freeze({"kind": "field", "name": str(node.value)})
-    args = [canonicalize_ast(arg, grammar=grammar) for arg in node.args]
+        return _freeze({"kind": "field", "name": node.value})
+    args = [_canonicalize_validated(arg, grammar=grammar) for arg in node.args]
     spec = grammar.operators.get(node.op)
     if spec is not None and spec.commutative:
         args.sort(key=lambda item: canonical_json(thaw_canonical_ast(item)))

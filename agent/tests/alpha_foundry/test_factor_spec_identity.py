@@ -77,6 +77,10 @@ def test_invalid_semantics_fail_closed() -> None:
         _semantics(execution_lag=0)
     with pytest.raises(ValueError, match="content hash"):
         _semantics(transform_pipeline_hash="caller-score")
+    with pytest.raises(ValueError, match="missing expression fields"):
+        build_factor_spec_identity(
+            "rank(close)", _semantics(field_semantics={"volume": "exchange_reported_eod"})
+        )
 
 
 def test_feature_off_candidate_identity_matches_legacy_raw_formula_golden() -> None:

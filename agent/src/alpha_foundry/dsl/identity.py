@@ -14,7 +14,7 @@ from src.alpha_foundry.dsl.canonical import (
 )
 from src.alpha_foundry.dsl.grammar import DEFAULT_GRAMMAR, GrammarDefinition
 from src.alpha_foundry.dsl.model import ASTNode
-from src.alpha_foundry.dsl.parser import FormulaParser
+from src.alpha_foundry.dsl.parser import FormulaParseError, FormulaParser
 from src.alpha_foundry.dsl.validator import validate_expression
 from src.alpha_quality.flags import ResolvedAGSFlags
 from src.research_ledger.events import EventDraft, EventIdempotencyConflict, ResearchEventStore
@@ -115,6 +115,8 @@ class FactorIdentityAttempt:
 def _parse_and_validate(formula: str, grammar: GrammarDefinition) -> ASTNode:
     try:
         ast = FormulaParser(grammar).parse(formula)
+    except FormulaParseError as exc:
+        raise FormulaIdentityError([exc.error_code]) from exc
     except ValueError as exc:
         raise FormulaIdentityError(["INVALID_SYNTAX"]) from exc
     validation = validate_expression(ast, grammar=grammar)
@@ -152,9 +154,7 @@ def build_expression_identity(
 
 
 def build_sign_normalized_identity(identity: ExpressionIdentity) -> SignNormalizedIdentity:
-    root = identity.canonical_ast
-    polarity = -1 if root.get("kind") == "call" and root.get("op") == "neg" else 1
-    unsigned = root["args"][0] if polarity == -1 else root
+    unsigned, polarity = _strip_explicit_polarity(identity.canonical_ast)
     return SignNormalizedIdentity(
         sign_normalized_id=canonical_json_hash(
             {
@@ -167,6 +167,30 @@ def build_sign_normalized_identity(identity: ExpressionIdentity) -> SignNormaliz
     )
 
 
+def _strip_explicit_polarity(root: CanonicalAST) -> tuple[CanonicalAST, int]:
+    """Remove only explicit syntactic polarity wrappers, never algebraic signs."""
+    polarity = 1
+    current = root
+    while current.get("kind") == "call":
+        op = current.get("op")
+        args = current.get("args")
+        if op == "neg" and isinstance(args, tuple) and len(args) == 1:
+            polarity *= -1
+            current = args[0]
+            continue
+        if op == "mul" and isinstance(args, tuple) and len(args) == 2:
+            negative = [
+                arg for arg in args
+                if arg.get("kind") == "number" and arg.get("value") == "-1"
+            ]
+            if len(negative) == 1:
+                polarity *= -1
+                current = args[1] if args[0] is negative[0] else args[0]
+                continue
+        break
+    return current, polarity
+
+
 def build_factor_spec_identity(
     formula: str,
     semantics: FactorSpecSemantics,
@@ -174,6 +198,12 @@ def build_factor_spec_identity(
     grammar: GrammarDefinition = DEFAULT_GRAMMAR,
 ) -> FactorSpecIdentity:
     expression = build_expression_identity(formula, grammar=grammar)
+    used_fields = _parse_and_validate(formula, grammar).fields()
+    missing_semantics = used_fields - set(semantics.field_semantics)
+    if missing_semantics:
+        raise ValueError(
+            "field_semantics missing expression fields: " + ",".join(sorted(missing_semantics))
+        )
     factor_spec_id = canonical_json_hash(
         {"expression_id": expression.expression_id, "semantics": semantics.to_dict()}
     )
@@ -182,6 +212,40 @@ def build_factor_spec_identity(
         expression=expression,
         semantics=semantics,
     )
+
+
+def validate_factor_definition_payload(payload: Mapping[str, Any]) -> None:
+    """Rebuild a production definition payload without trusting caller hashes."""
+    metadata = payload.get("metadata")
+    if not isinstance(metadata, Mapping) or not metadata:
+        raise ValueError("factor definition has no validated identity metadata")
+    expected = {
+        "identity_schema_version", "originating_trial_id", "canonical_ast",
+        "canonical_formula", "semantics", "grammar_definition",
+    }
+    if set(metadata) != expected or metadata["identity_schema_version"] != "factor_spec.v1":
+        raise ValueError("factor definition identity metadata is not closed")
+    grammar_raw = metadata["grammar_definition"]
+    semantics_raw = metadata["semantics"]
+    canonical_formula = metadata["canonical_formula"]
+    if not isinstance(grammar_raw, Mapping) or not isinstance(semantics_raw, Mapping):
+        raise ValueError("factor definition grammar or semantics is malformed")
+    if not isinstance(canonical_formula, str) or not canonical_formula:
+        raise ValueError("factor definition canonical formula is malformed")
+    grammar = GrammarDefinition.from_dict(grammar_raw)
+    semantics = FactorSpecSemantics(**dict(semantics_raw))
+    rebuilt = build_factor_spec_identity(canonical_formula, semantics, grammar=grammar)
+    if grammar.semantic_version != payload.get("grammar_version") or grammar.content_hash != payload.get("grammar_hash"):
+        raise ValueError("factor definition grammar identity mismatch")
+    if rebuilt.factor_spec_id != payload.get("factor_spec_id"):
+        raise ValueError("factor definition factor_spec_id mismatch")
+    expression = rebuilt.expression
+    if expression.expression_id != payload.get("expression_id"):
+        raise ValueError("factor definition expression_id mismatch")
+    if expression.canonical_ast_hash != payload.get("canonical_ast_hash"):
+        raise ValueError("factor definition canonical_ast_hash mismatch")
+    if thaw_canonical_ast(expression.canonical_ast) != thaw_canonical_ast(metadata["canonical_ast"]):
+        raise ValueError("factor definition canonical AST mismatch")
 
 
 class FactorIdentityService:
@@ -194,7 +258,11 @@ class FactorIdentityService:
     """
 
     def __init__(self, *, store: ResearchEventStore, flags: ResolvedAGSFlags) -> None:
-        if not flags.enabled("VIBE_TRADING_ALPHA_FOUNDRY") or not flags.enabled("VIBE_TRADING_FACTOR_DAG"):
+        required = (
+            "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_RESEARCH_EVENTS",
+            "VIBE_TRADING_FACTOR_DAG",
+        )
+        if any(not flags.enabled(name) for name in required):
             raise RuntimeError("canonical factor identity capability is disabled")
         self.store = store
         self.flags = flags
@@ -267,10 +335,12 @@ class FactorIdentityService:
                         "grammar_version": identity.expression.grammar_version,
                         "grammar_hash": identity.expression.grammar_hash,
                         "metadata": {
+                            "identity_schema_version": "factor_spec.v1",
                             "originating_trial_id": trial_id,
                             "canonical_ast": thaw_canonical_ast(identity.expression.canonical_ast),
                             "canonical_formula": identity.expression.canonical_formula,
                             "semantics": identity.semantics.to_dict(),
+                            "grammar_definition": grammar.to_dict(),
                         },
                         "artifact_refs": [],
                     },
@@ -361,5 +431,5 @@ __all__ = [
     "ExpressionIdentity", "FactorIdentityAttempt", "FactorIdentityService",
     "FactorSpecIdentity", "FactorSpecSemantics", "FormulaIdentityError",
     "SignNormalizedIdentity", "build_expression_identity", "build_factor_spec_identity",
-    "build_sign_normalized_identity",
+    "build_sign_normalized_identity", "validate_factor_definition_payload",
 ]
