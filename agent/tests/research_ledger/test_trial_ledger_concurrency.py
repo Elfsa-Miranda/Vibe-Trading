@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from pathlib import Path
+
+import pytest
 
 from src.research_ledger.trial_ledger import TrialLedger, TrialLedgerEntry
 
@@ -49,3 +53,24 @@ def test_concurrent_appends_do_not_corrupt_hash_chain(tmp_path) -> None:
     assert len(records) == 20
     assert len(set(hashes)) == 20
     assert ledger.verify_hash_chain()
+
+
+def test_initial_schema_lock_uses_bounded_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_connect = TrialLedger._connect
+    attempts = 0
+
+    def flaky_connect(self: TrialLedger):  # noqa: ANN202
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise sqlite3.OperationalError("database is locked")
+        return real_connect(self)
+
+    monkeypatch.setattr(TrialLedger, "_connect", flaky_connect)
+
+    ledger = TrialLedger(tmp_path / "retry.sqlite")
+
+    assert attempts == 3
+    assert ledger.query() == []

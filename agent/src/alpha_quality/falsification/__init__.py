@@ -1,7 +1,59 @@
+"""Public, feature-gated falsification evidence surface."""
+
 from src.alpha_quality.falsification.catalog import TestCapability
 from src.alpha_quality.falsification.contract import FalsificationContract
+from src.alpha_quality.falsification.executor import (
+    FixedFamilyResult,
+    FixedHorizonExecutor,
+    FixedTestEvidence,
+    execute_fixed_family,
+)
+from src.alpha_quality.falsification.mei import (
+    MechanismEvidenceIndex,
+    MechanismEvidenceRef,
+    aggregate_mechanism_evidence,
+)
+from src.alpha_quality.falsification.policy import (
+    APPROVED_SEQUENTIAL_METHOD,
+    MECHANISM_EVIDENCE_POLICY_VERSION,
+    SEQUENTIAL_STOPPING_RULE,
+    sequential_method_availability,
+)
 from src.alpha_quality.falsification.regime import RegimeDefinition
-from src.alpha_quality.falsification.validator import validate_contract
+from src.alpha_quality.falsification.sequential import (
+    SequentialBlock,
+    SequentialExecutor,
+    SequentialLook,
+    SequentialProtocol,
+    SequentialState,
+)
+from src.alpha_quality.falsification.sequential_service import (
+    SequentialFalsificationService,
+)
 from src.alpha_quality.falsification.service import FalsificationService
-from src.alpha_quality.falsification.executor import FixedFamilyResult, FixedHorizonExecutor, FixedTestEvidence, execute_fixed_family
-__all__=["TestCapability","FalsificationContract","RegimeDefinition","validate_contract","FalsificationService","FixedFamilyResult","FixedHorizonExecutor","FixedTestEvidence","execute_fixed_family"]
+from src.alpha_quality.falsification.validator import validate_contract
+
+__all__ = [
+    "APPROVED_SEQUENTIAL_METHOD",
+    "FalsificationContract",
+    "FalsificationService",
+    "FixedFamilyResult",
+    "FixedHorizonExecutor",
+    "FixedTestEvidence",
+    "MECHANISM_EVIDENCE_POLICY_VERSION",
+    "MechanismEvidenceIndex",
+    "MechanismEvidenceRef",
+    "RegimeDefinition",
+    "SEQUENTIAL_STOPPING_RULE",
+    "SequentialBlock",
+    "SequentialExecutor",
+    "SequentialFalsificationService",
+    "SequentialLook",
+    "SequentialProtocol",
+    "SequentialState",
+    "TestCapability",
+    "aggregate_mechanism_evidence",
+    "execute_fixed_family",
+    "sequential_method_availability",
+    "validate_contract",
+]

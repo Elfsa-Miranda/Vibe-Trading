@@ -98,30 +98,37 @@ class TrialLedger:
             check_same_thread=False,
         )
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=30000")
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute("PRAGMA busy_timeout=30000")
         return conn
 
     def _init_db(self) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS trial_entries (
-                    seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                    trial_id TEXT NOT NULL UNIQUE,
-                    trial_group_id TEXT NOT NULL,
-                    candidate_id TEXT NOT NULL,
-                    previous_entry_hash TEXT,
-                    entry_hash TEXT NOT NULL UNIQUE,
-                    created_at TEXT NOT NULL,
-                    payload TEXT NOT NULL
-                )
-                """
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_trial_entries_candidate ON trial_entries(candidate_id)"
-            )
+        for attempt in range(8):
+            try:
+                with self._connect() as conn:
+                    conn.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS trial_entries (
+                            seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                            trial_id TEXT NOT NULL UNIQUE,
+                            trial_group_id TEXT NOT NULL,
+                            candidate_id TEXT NOT NULL,
+                            previous_entry_hash TEXT,
+                            entry_hash TEXT NOT NULL UNIQUE,
+                            created_at TEXT NOT NULL,
+                            payload TEXT NOT NULL
+                        )
+                        """
+                    )
+                    conn.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_trial_entries_candidate ON trial_entries(candidate_id)"
+                    )
+                return
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc).lower() or attempt == 7:
+                    raise
+                time.sleep(0.01 * (2**attempt))
 
     def append(self, entry: TrialLedgerEntry) -> TrialLedgerEntry:
         last_error: Exception | None = None
