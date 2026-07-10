@@ -414,6 +414,7 @@ class ResearchEventStore:
             "MechanismEvidenceIndexRecorded": "mei_id",
             "ComplementEvidenceRecorded": "complement_id",
             "QualityDecisionRecorded": "decision_id",
+            "QualityDecisionV2Recorded": "decision_id",
             "ForwardPlanRecorded": "plan_id",
             "ForwardObservationRecorded": "observation_id",
         }
@@ -534,6 +535,17 @@ class ResearchEventStore:
             return
         if event_type == "ComplementEvidenceRecorded":
             self._validate_complement_evidence_transition(conn, payload)
+            return
+        if event_type == "QualityDecisionV2Recorded":
+            definition = conn.execute(
+                """
+                SELECT 1 FROM research_events
+                WHERE event_type = 'FactorDefinitionRecorded' AND entity_id = ?
+                """,
+                (payload["factor_spec_id"],),
+            ).fetchone()
+            if definition is None:
+                raise EventTransitionError("Decision v2 has no prior factor definition")
             return
         if event_type == "ForwardObservationRecorded":
             plan = conn.execute(
@@ -1254,6 +1266,9 @@ class ResearchEventStore:
                     terminal["evaluation_event_hash"]
                     != payload["source_evaluation_event_hash"]
                 ):
+                    return False
+            elif event.event_type == "QualityDecisionV2Recorded":
+                if str(payload["factor_spec_id"]) not in definitions:
                     return False
             elif event.event_type == "ForwardPlanRecorded":
                 plans.add(str(payload["plan_id"]))
