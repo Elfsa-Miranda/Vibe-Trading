@@ -11,6 +11,7 @@ from src.alpha_foundry.memory.model import (
     EpisodicProjection,
     ProcessMemoryObservation,
     ProcessPosterior,
+    authorized_episodic_projection,
 )
 from src.alpha_foundry.memory.motif import derive_motif
 from src.research_ledger.events import ResearchEventEnvelope
@@ -153,7 +154,7 @@ class EpisodicProjector:
             "observations": [observation.__dict__ for observation in observations],
             "posteriors": [posterior.__dict__ for posterior in posteriors],
         }
-        return EpisodicProjection(
+        return authorized_episodic_projection(
             schema_version="episodic_process_projection.v2",
             source_watermark_event_hash=ordered[-1].event_hash if ordered else None,
             observations=tuple(observations),

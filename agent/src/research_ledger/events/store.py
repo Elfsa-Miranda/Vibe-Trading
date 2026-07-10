@@ -204,6 +204,7 @@ class ResearchEventStore:
                 )
 
     def append_event(self, draft: EventDraft) -> ResearchEventEnvelope:
+        self._validate_event_capability(draft.event_type)
         self._validate_draft_identity(draft)
         payload = validate_and_redact_payload(
             draft.event_type,
@@ -259,6 +260,30 @@ class ResearchEventStore:
                 if conn is not None:
                     conn.close()
         raise ResearchEventAppendError(f"append failed after retries: {last_error}")
+
+    def _validate_event_capability(self, event_type: str) -> None:
+        requirements = {
+            "ProcessActionFrozenV2": (
+                "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
+                "VIBE_TRADING_PROCESS_MEMORY",
+            ),
+            "ProcessOutcomeRecordedV2": (
+                "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
+                "VIBE_TRADING_PROCESS_MEMORY",
+            ),
+            "RetrieverDecisionV2Recorded": (
+                "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
+                "VIBE_TRADING_PROCESS_MEMORY", "VIBE_TRADING_TOPOLOGY_RETRIEVER",
+            ),
+        }
+        missing = [
+            name for name in requirements.get(event_type, ())
+            if not self.flags.enabled(name)
+        ]
+        if missing:
+            raise EventValidationError(
+                f"event capability is disabled for {event_type}: {sorted(missing)}"
+            )
 
     def _build_event(
         self,
@@ -409,6 +434,7 @@ class ResearchEventStore:
             "EvaluationRecorded": "evaluation_id",
             "TrialTerminated": "trial_id",
             "RetrieverDecisionRecorded": "decision_id",
+            "RetrieverDecisionV2Recorded": "decision_id",
             "FalsificationContractRegistered": "contract_id",
             "SequentialProtocolRegistered": "protocol_id",
             "SequentialLookRecorded": "look_id",
@@ -544,6 +570,9 @@ class ResearchEventStore:
             return
         if event_type == "ProcessOutcomeRecordedV2":
             self._validate_process_outcome_v2_transition(conn, draft, payload)
+            return
+        if event_type == "RetrieverDecisionV2Recorded":
+            self._validate_retriever_v2_transition(conn, payload)
             return
         if event_type == "ProcessOutcomeRecorded":
             action = conn.execute(
@@ -790,6 +819,73 @@ class ResearchEventStore:
             or canonical_json_hash(diff.to_dict()) != payload["ast_diff_hash"]
         ):
             raise EventTransitionError("process outcome v2 AST identity binding is mismatched")
+
+    @staticmethod
+    def _validate_retriever_v2_transition(
+        conn: sqlite3.Connection,
+        payload: Mapping[str, Any],
+    ) -> None:
+        watermark = conn.execute(
+            "SELECT seq FROM research_events WHERE event_hash = ?",
+            (payload["eligible_event_watermark"],),
+        ).fetchone()
+        if watermark is None:
+            raise EventTransitionError("retriever v2 cites an unknown discovery watermark")
+        watermark_seq = int(watermark["seq"])
+        evaluations = conn.execute(
+            "SELECT seq, event_hash, payload FROM research_events WHERE event_type = 'EvaluationRecorded' ORDER BY seq ASC"
+        ).fetchall()
+        terminals = conn.execute(
+            "SELECT seq, event_hash, payload FROM research_events WHERE event_type = 'TrialTerminated' ORDER BY seq ASC"
+        ).fetchall()
+        outcomes = conn.execute(
+            "SELECT seq, payload FROM research_events WHERE event_type = 'ProcessOutcomeRecordedV2' ORDER BY seq ASC"
+        ).fetchall()
+        evaluation_payloads = [
+            (int(row["seq"]), str(row["event_hash"]), json.loads(str(row["payload"])))
+            for row in evaluations
+        ]
+        terminal_payloads = [
+            (int(row["seq"]), str(row["event_hash"]), json.loads(str(row["payload"])))
+            for row in terminals
+        ]
+        outcome_payloads = [
+            (int(row["seq"]), json.loads(str(row["payload"]))) for row in outcomes
+        ]
+        for component in payload["components"]:
+            factor_id = component["factor_spec_id"]
+            definition = conn.execute(
+                "SELECT seq FROM research_events WHERE event_type = 'FactorDefinitionRecorded' AND entity_id = ?",
+                (factor_id,),
+            ).fetchone()
+            if definition is None or int(definition["seq"]) > watermark_seq:
+                raise EventTransitionError("retriever v2 candidate has no factor definition")
+            eligible = False
+            for evaluation_seq, evaluation_hash, evaluation in evaluation_payloads:
+                if evaluation_seq > watermark_seq:
+                    continue
+                if evaluation["factor_spec_id"] != factor_id or evaluation["data_scope"] not in {"valid", "train_valid"}:
+                    continue
+                for terminal_seq, terminal_hash, terminal in terminal_payloads:
+                    if terminal_seq > watermark_seq:
+                        continue
+                    if terminal["trial_id"] != evaluation["trial_id"] or terminal["status"] not in {"success", "reject"}:
+                        continue
+                    directly_cited = terminal["evaluation_event_hash"] == evaluation_hash
+                    outcome_cited = any(
+                        outcome_seq <= watermark_seq
+                        and
+                        outcome["terminal_event_hash"] == terminal_hash
+                        and outcome["evaluation_event_hash"] == evaluation_hash
+                        for outcome_seq, outcome in outcome_payloads
+                    )
+                    if directly_cited or outcome_cited:
+                        eligible = True
+                        break
+                if eligible:
+                    break
+            if not eligible:
+                raise EventTransitionError("retriever v2 candidate lacks terminal train/valid evidence")
 
     @staticmethod
     def _validate_complement_evidence_transition(
