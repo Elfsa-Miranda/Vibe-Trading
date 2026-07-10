@@ -48,6 +48,10 @@ class DiscoveryEvidenceView:
     ) -> None:
         if _token is not _DISCOVERY_TOKEN:
             raise TypeError("DiscoveryEvidenceView must be built from terminal discovery projections")
+        if not isinstance(factual, FactualMemoryView) or not isinstance(
+            episodic, EpisodicProjection
+        ):
+            raise TypeError("discovery views reject monitoring or final evidence types")
         if not factual.is_authorized() or not is_authorized_episodic_projection(episodic):
             raise TypeError("discovery views require authorized projection builders")
         dag_watermark = factual.dag.source_watermark_event_hash

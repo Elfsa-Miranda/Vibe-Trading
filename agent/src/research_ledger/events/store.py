@@ -450,6 +450,12 @@ class ResearchEventStore:
             "ComplementEvidenceRecorded": "complement_id",
             "QualityDecisionRecorded": "decision_id",
             "QualityDecisionV2Recorded": "decision_id",
+            "FinalCandidateFrozen": "freeze_id",
+            "FinalTestCapabilityIssued": "capability_id",
+            "FinalTestAccessRecorded": "access_id",
+            "FinalTestArtifactRecorded": "artifact_id",
+            "ForwardPlanV2Recorded": "plan_id",
+            "ForwardObservationV2Recorded": "observation_id",
             "ForwardPlanRecorded": "plan_id",
             "ForwardObservationRecorded": "observation_id",
         }
@@ -721,6 +727,24 @@ class ResearchEventStore:
             ).fetchone()
             if definition is None:
                 raise EventTransitionError("Decision v2 has no prior factor definition")
+            return
+        if event_type == "FinalCandidateFrozen":
+            self._validate_final_candidate_transition(conn, payload)
+            return
+        if event_type == "FinalTestCapabilityIssued":
+            self._validate_final_capability_transition(conn, payload)
+            return
+        if event_type == "FinalTestAccessRecorded":
+            self._validate_final_access_transition(conn, payload)
+            return
+        if event_type == "FinalTestArtifactRecorded":
+            self._validate_final_artifact_transition(conn, payload)
+            return
+        if event_type == "ForwardPlanV2Recorded":
+            self._validate_forward_plan_v2_transition(conn, payload)
+            return
+        if event_type == "ForwardObservationV2Recorded":
+            self._validate_forward_observation_v2_transition(conn, payload)
             return
         if event_type == "ForwardObservationRecorded":
             plan = conn.execute(
@@ -1030,6 +1054,222 @@ class ResearchEventStore:
             terminal["evaluation_event_hash"] != payload["source_evaluation_event_hash"]
         ):
             raise EventTransitionError("successful terminal does not reference complement evaluation")
+
+    @staticmethod
+    def _validate_final_candidate_transition(
+        conn: sqlite3.Connection, payload: Mapping[str, Any]
+    ) -> None:
+        definition = conn.execute(
+            "SELECT event_hash FROM research_events WHERE event_type = 'FactorDefinitionRecorded' AND entity_id = ? ORDER BY seq DESC LIMIT 1",
+            (payload["factor_spec_id"],),
+        ).fetchone()
+        if definition is None:
+            raise EventTransitionError("final candidate has no prior factor definition")
+        if definition["event_hash"] != payload["definition_hash"]:
+            raise EventTransitionError("final candidate definition hash does not match ledger")
+        prior = conn.execute(
+            "SELECT payload FROM research_events WHERE event_type = 'FinalCandidateFrozen' AND entity_id = ?",
+            (payload["freeze_id"],),
+        ).fetchone()
+        if prior is not None:
+            raise EventTransitionError("final candidate freeze already exists")
+
+    @staticmethod
+    def _validate_final_capability_transition(
+        conn: sqlite3.Connection, payload: Mapping[str, Any]
+    ) -> None:
+        freeze = conn.execute(
+            """
+            SELECT payload FROM research_events
+            WHERE event_type = 'FinalCandidateFrozen'
+            AND json_extract(payload, '$.candidate_hash') = ?
+            ORDER BY seq DESC LIMIT 1
+            """,
+            (payload["candidate_hash"],),
+        ).fetchone()
+        if freeze is None:
+            raise EventTransitionError("final capability has no prior frozen candidate")
+        frozen = json.loads(str(freeze["payload"]))
+        if (
+            frozen["factor_spec_id"] != payload["factor_spec_id"]
+            or frozen["data_snapshot_hash"] != payload["data_snapshot_hash"]
+        ):
+            raise EventTransitionError("final capability does not match frozen candidate")
+        prior = conn.execute(
+            """
+            SELECT 1 FROM research_events
+            WHERE event_type = 'FinalTestCapabilityIssued'
+            AND json_extract(payload, '$.candidate_hash') = ?
+            """,
+            (payload["candidate_hash"],),
+        ).fetchone()
+        if prior is not None:
+            raise EventTransitionError("frozen candidate already has a final capability")
+
+    @staticmethod
+    def _validate_final_access_transition(
+        conn: sqlite3.Connection, payload: Mapping[str, Any]
+    ) -> None:
+        definition = conn.execute(
+            "SELECT 1 FROM research_events WHERE event_type = 'FactorDefinitionRecorded' AND entity_id = ?",
+            (payload["factor_spec_id"],),
+        ).fetchone()
+        if payload["outcome"] == "allowed" and definition is None:
+            raise EventTransitionError("final access has no prior factor definition")
+        capability_row = conn.execute(
+            """
+            SELECT payload FROM research_events
+            WHERE event_type = 'FinalTestCapabilityIssued'
+            AND json_extract(payload, '$.capability_fingerprint') = ?
+            ORDER BY seq DESC LIMIT 1
+            """,
+            (payload["capability_fingerprint"],),
+        ).fetchone()
+        if payload["outcome"] == "allowed":
+            if capability_row is None:
+                raise EventTransitionError("allowed final access lacks an issued capability")
+            capability = json.loads(str(capability_row["payload"]))
+            if any(
+                capability[field] != payload[field]
+                for field in (
+                    "candidate_hash",
+                    "factor_spec_id",
+                    "declared_run_id",
+                )
+            ):
+                raise EventTransitionError("allowed final access does not match capability")
+            prior_allowed = conn.execute(
+                """
+                SELECT 1 FROM research_events
+                WHERE event_type = 'FinalTestAccessRecorded'
+                AND json_extract(payload, '$.capability_fingerprint') = ?
+                AND json_extract(payload, '$.outcome') = 'allowed'
+                """,
+                (payload["capability_fingerprint"],),
+            ).fetchone()
+            if prior_allowed is not None:
+                raise EventTransitionError("final capability was already consumed")
+
+    @staticmethod
+    def _validate_final_artifact_transition(
+        conn: sqlite3.Connection, payload: Mapping[str, Any]
+    ) -> None:
+        access_row = conn.execute(
+            """
+            SELECT payload FROM research_events
+            WHERE event_type = 'FinalTestAccessRecorded' AND event_hash = ?
+            """,
+            (payload["access_event_hash"],),
+        ).fetchone()
+        if access_row is None:
+            raise EventTransitionError("final artifact lacks an audited access")
+        access = json.loads(str(access_row["payload"]))
+        if (
+            access["outcome"] != "allowed"
+            or access["candidate_hash"] != payload["candidate_hash"]
+            or access["factor_spec_id"] != payload["factor_spec_id"]
+        ):
+            raise EventTransitionError("final artifact does not match allowed access")
+        candidate_row = conn.execute(
+            """
+            SELECT payload FROM research_events
+            WHERE event_type = 'FinalCandidateFrozen'
+            AND json_extract(payload, '$.candidate_hash') = ?
+            ORDER BY seq DESC LIMIT 1
+            """,
+            (payload["candidate_hash"],),
+        ).fetchone()
+        if candidate_row is None:
+            raise EventTransitionError("final artifact lacks its frozen candidate")
+        candidate = json.loads(str(candidate_row["payload"]))
+        if any(
+            candidate[field] != payload[field]
+            for field in (
+                "definition_hash",
+                "transform_pipeline_hash",
+                "cost_model_hash",
+                "regime_config_hash",
+                "policy_hash",
+                "data_snapshot_hash",
+            )
+        ):
+            raise EventTransitionError("final artifact configuration differs from frozen candidate")
+        prior = conn.execute(
+            """
+            SELECT 1 FROM research_events
+            WHERE event_type = 'FinalTestArtifactRecorded'
+            AND json_extract(payload, '$.candidate_hash') = ?
+            """,
+            (payload["candidate_hash"],),
+        ).fetchone()
+        if prior is not None:
+            raise EventTransitionError("frozen candidate already has a final artifact")
+
+    @staticmethod
+    def _validate_forward_plan_v2_transition(
+        conn: sqlite3.Connection, payload: Mapping[str, Any]
+    ) -> None:
+        artifact_row = conn.execute(
+            """
+            SELECT payload FROM research_events
+            WHERE event_type = 'FinalTestArtifactRecorded'
+            AND json_extract(payload, '$.artifact_hash') = ?
+            ORDER BY seq DESC LIMIT 1
+            """,
+            (payload["final_test_artifact_hash"],),
+        ).fetchone()
+        if artifact_row is None:
+            raise EventTransitionError("forward plan lacks a prior final-test artifact")
+        artifact = json.loads(str(artifact_row["payload"]))
+        if (
+            artifact["factor_spec_id"] != payload["factor_spec_id"]
+            or not artifact["quality_passed"]
+            or artifact["contaminated"]
+            or any(
+                artifact[field] != payload[field]
+                for field in (
+                    "definition_hash",
+                    "transform_pipeline_hash",
+                    "cost_model_hash",
+                    "regime_config_hash",
+                    "policy_hash",
+                )
+            )
+        ):
+            raise EventTransitionError("forward plan requires qualified uncontaminated final evidence")
+
+    @staticmethod
+    def _validate_forward_observation_v2_transition(
+        conn: sqlite3.Connection, payload: Mapping[str, Any]
+    ) -> None:
+        plan_row = conn.execute(
+            "SELECT payload FROM research_events WHERE event_type = 'ForwardPlanV2Recorded' AND entity_id = ?",
+            (payload["plan_id"],),
+        ).fetchone()
+        if plan_row is None:
+            raise EventTransitionError("forward observation has no prior frozen plan")
+        plan = json.loads(str(plan_row["payload"]))
+        if plan["plan_hash"] != payload["plan_hash"]:
+            raise EventTransitionError("forward observation plan hash mismatch")
+        last_row = conn.execute(
+            """
+            SELECT payload FROM research_events
+            WHERE event_type = 'ForwardObservationV2Recorded'
+            AND json_extract(payload, '$.plan_id') = ?
+            ORDER BY seq DESC LIMIT 1
+            """,
+            (payload["plan_id"],),
+        ).fetchone()
+        if last_row is None:
+            if payload["previous_observation_hash"] is not None:
+                raise EventTransitionError("first forward observation cannot have a previous hash")
+            return
+        previous = json.loads(str(last_row["payload"]))
+        if (
+            payload["period_start"] <= previous["period_end"]
+            or payload["previous_observation_hash"] != previous["observation_hash"]
+        ):
+            raise EventTransitionError("forward observations must append in ordered hash chain")
 
     @staticmethod
     def _event_payloads(
@@ -1453,6 +1693,7 @@ class ResearchEventStore:
         terminal_hashes: set[str] = set()
         terminal_payloads: dict[str, Mapping[str, Any]] = {}
         definitions: dict[str, Mapping[str, Any]] = {}
+        definition_event_hashes: dict[str, str] = {}
         contracts: dict[str, Mapping[str, Any]] = {}
         accessed_factors: set[str] = set()
         protocols: dict[str, Mapping[str, Any]] = {}
@@ -1464,10 +1705,19 @@ class ResearchEventStore:
         result_artifact_hashes: dict[str, set[str]] = {}
         result_contracts: set[str] = set()
         plans: set[str] = set()
+        final_candidates: dict[str, Mapping[str, Any]] = {}
+        final_capabilities: dict[str, Mapping[str, Any]] = {}
+        allowed_final_tokens: set[str] = set()
+        final_accesses: dict[str, Mapping[str, Any]] = {}
+        final_artifacts: dict[str, Mapping[str, Any]] = {}
+        forward_v2_plans: dict[str, Mapping[str, Any]] = {}
+        forward_v2_observations: dict[str, list[Mapping[str, Any]]] = {}
         for event in events:
             payload = event.payload
             if event.event_type == "FactorDefinitionRecorded":
-                definitions[str(payload["factor_spec_id"])] = payload
+                factor_spec_id = str(payload["factor_spec_id"])
+                definitions[factor_spec_id] = payload
+                definition_event_hashes[factor_spec_id] = event.event_hash
             elif event.event_type == "TrialStarted":
                 trial_id = str(payload["trial_id"])
                 if trial_id in started or trial_id in terminated:
@@ -1672,6 +1922,128 @@ class ResearchEventStore:
             elif event.event_type == "QualityDecisionV2Recorded":
                 if str(payload["factor_spec_id"]) not in definitions:
                     return False
+            elif event.event_type == "FinalCandidateFrozen":
+                factor_spec_id = str(payload["factor_spec_id"])
+                candidate_hash = str(payload["candidate_hash"])
+                if (
+                    factor_spec_id not in definitions
+                    or definition_event_hashes.get(factor_spec_id)
+                    != payload["definition_hash"]
+                    or candidate_hash in final_candidates
+                ):
+                    return False
+                final_candidates[candidate_hash] = payload
+            elif event.event_type == "FinalTestCapabilityIssued":
+                candidate_hash = str(payload["candidate_hash"])
+                token_hash = str(payload["capability_fingerprint"])
+                candidate = final_candidates.get(candidate_hash)
+                if (
+                    candidate is None
+                    or token_hash in final_capabilities
+                    or any(
+                        item["candidate_hash"] == candidate_hash
+                        for item in final_capabilities.values()
+                    )
+                    or candidate["factor_spec_id"] != payload["factor_spec_id"]
+                    or candidate["data_snapshot_hash"] != payload["data_snapshot_hash"]
+                ):
+                    return False
+                final_capabilities[token_hash] = payload
+            elif event.event_type == "FinalTestAccessRecorded":
+                factor_spec_id = str(payload["factor_spec_id"])
+                token_hash = str(payload["capability_fingerprint"])
+                if payload["outcome"] == "allowed" and factor_spec_id not in definitions:
+                    return False
+                if payload["outcome"] == "allowed":
+                    capability = final_capabilities.get(token_hash)
+                    if (
+                        capability is None
+                        or token_hash in allowed_final_tokens
+                        or any(
+                            capability[field] != payload[field]
+                            for field in (
+                                "candidate_hash",
+                                "factor_spec_id",
+                                "declared_run_id",
+                            )
+                        )
+                    ):
+                        return False
+                    allowed_final_tokens.add(token_hash)
+                final_accesses[event.event_hash] = payload
+            elif event.event_type == "FinalTestArtifactRecorded":
+                access = final_accesses.get(str(payload["access_event_hash"]))
+                candidate_hash = str(payload["candidate_hash"])
+                if (
+                    access is None
+                    or access["outcome"] != "allowed"
+                    or access["candidate_hash"] != candidate_hash
+                    or access["factor_spec_id"] != payload["factor_spec_id"]
+                    or candidate_hash in final_artifacts
+                ):
+                    return False
+                candidate = final_candidates.get(candidate_hash)
+                if candidate is None or any(
+                    candidate[field] != payload[field]
+                    for field in (
+                        "definition_hash",
+                        "transform_pipeline_hash",
+                        "cost_model_hash",
+                        "regime_config_hash",
+                        "policy_hash",
+                        "data_snapshot_hash",
+                    )
+                ):
+                    return False
+                final_artifacts[candidate_hash] = payload
+            elif event.event_type == "ForwardPlanV2Recorded":
+                artifact = next(
+                    (
+                        item
+                        for item in final_artifacts.values()
+                        if item["artifact_hash"] == payload["final_test_artifact_hash"]
+                    ),
+                    None,
+                )
+                plan_id = str(payload["plan_id"])
+                if (
+                    artifact is None
+                    or artifact["factor_spec_id"] != payload["factor_spec_id"]
+                    or not artifact["quality_passed"]
+                    or artifact["contaminated"]
+                    or any(
+                        artifact[field] != payload[field]
+                        for field in (
+                            "definition_hash",
+                            "transform_pipeline_hash",
+                            "cost_model_hash",
+                            "regime_config_hash",
+                            "policy_hash",
+                        )
+                    )
+                    or plan_id in forward_v2_plans
+                ):
+                    return False
+                forward_v2_plans[plan_id] = payload
+                forward_v2_observations[plan_id] = []
+            elif event.event_type == "ForwardObservationV2Recorded":
+                plan_id = str(payload["plan_id"])
+                plan = forward_v2_plans.get(plan_id)
+                if plan is None or plan["plan_hash"] != payload["plan_hash"]:
+                    return False
+                forward_prior = forward_v2_observations[plan_id]
+                if not forward_prior:
+                    if payload["previous_observation_hash"] is not None:
+                        return False
+                else:
+                    previous = forward_prior[-1]
+                    if (
+                        payload["period_start"] <= previous["period_end"]
+                        or payload["previous_observation_hash"]
+                        != previous["observation_hash"]
+                    ):
+                        return False
+                forward_prior.append(payload)
             elif event.event_type == "ForwardPlanRecorded":
                 plans.add(str(payload["plan_id"]))
             elif event.event_type == "ForwardObservationRecorded":
