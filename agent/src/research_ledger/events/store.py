@@ -406,6 +406,7 @@ class ResearchEventStore:
             "TrialTerminated": "trial_id",
             "RetrieverDecisionRecorded": "decision_id",
             "FalsificationContractRegistered": "contract_id",
+            "OutcomeDataAccessed": "access_id",
             "FalsificationResultRecorded": "result_id",
             "QualityDecisionRecorded": "decision_id",
             "ForwardPlanRecorded": "plan_id",

@@ -164,6 +164,7 @@ def test_closed_payload_registry_covers_every_required_event_type() -> None:
         "TrialTerminated",
         "RetrieverDecisionRecorded",
         "FalsificationContractRegistered",
+        "OutcomeDataAccessed",
         "FalsificationResultRecorded",
         "QualityDecisionRecorded",
         "ForwardPlanRecorded",
@@ -272,6 +273,12 @@ def test_every_registered_payload_schema_validates_a_complete_production_shape()
             "registered_at": timestamp,
             "data_access_cutoff": timestamp,
             "policy_hash": digest,
+        },
+        "OutcomeDataAccessed": {
+            "access_id": "access-1",
+            "factor_spec_id": "factor-1",
+            "data_scope": "valid",
+            "accessed_at": timestamp,
         },
         "FalsificationResultRecorded": {
             "result_id": "result-1",
