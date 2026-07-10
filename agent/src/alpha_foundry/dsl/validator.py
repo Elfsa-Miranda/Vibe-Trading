@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-from src.alpha_foundry.dsl.model import ASTNode, ValidationResult
+from src.alpha_foundry.dsl.grammar import DEFAULT_GRAMMAR, GrammarDefinition
+from src.alpha_foundry.dsl.model import ASTNode, NumberLiteral, ValidationResult
 
+# Compatibility constants are retained for v3.1 callers.  Validation itself is
+# driven by the versioned grammar passed to ``validate_expression``.
 ALLOWED_OPERATORS = {
     "rank",
     "zscore",
@@ -51,35 +54,67 @@ MAX_AST_NODES = 12
 MAX_WINDOW = 252
 
 
-def validate_expression(node: ASTNode) -> ValidationResult:
+def validate_expression(
+    node: ASTNode,
+    *,
+    grammar: GrammarDefinition = DEFAULT_GRAMMAR,
+) -> ValidationResult:
     errors: list[str] = []
-    if node.depth > MAX_AST_DEPTH:
+    if node.depth > grammar.max_ast_depth:
         errors.append("AST_DEPTH_EXCEEDED")
-    if node.node_count > MAX_AST_NODES:
+    if node.node_count > grammar.max_ast_nodes:
         errors.append("AST_NODE_LIMIT_EXCEEDED")
     for op in node.operators():
-        if op not in ALLOWED_OPERATORS:
+        if op not in grammar.operators:
             errors.append("OPERATOR_NOT_ALLOWED")
     for field in node.fields():
         if _is_lookahead_field(field):
             errors.append("LOOKAHEAD_DETECTED")
-        if field not in ALLOWED_FIELDS:
+        if field not in grammar.allowed_fields:
             errors.append("FIELD_NOT_ALLOWED")
-    for window in node.windows():
-        if window < 1 or window > MAX_WINDOW:
-            errors.append("WINDOW_OUT_OF_RANGE")
-    _check_delay_lags(node, errors)
+    _check_signatures(node, grammar, errors)
     return ValidationResult(ok=not errors, errors=sorted(set(errors)))
 
 
-def _check_delay_lags(node: ASTNode, errors: list[str]) -> None:
-    if node.op == "delay" and len(node.args) >= 2:
-        lag = node.args[1]
-        if isinstance(lag, int) and lag < 0:
-            errors.append("LOOKAHEAD_DETECTED")
+def _check_signatures(
+    node: ASTNode,
+    grammar: GrammarDefinition,
+    errors: list[str],
+) -> None:
+    spec = grammar.operators.get(node.op)
+    if spec is not None:
+        if len(node.args) != len(spec.argument_kinds):
+            errors.append("ARGUMENT_COUNT_INVALID")
+        for index, kind in enumerate(spec.argument_kinds):
+            if index >= len(node.args):
+                continue
+            argument = node.args[index]
+            if kind == "expression":
+                # Fields are leaf expressions in this DSL; only a scalar
+                # literal is invalid in an expression position.
+                if not isinstance(argument, ASTNode):
+                    errors.append("ARGUMENT_TYPE_INVALID")
+            elif kind == "expression_or_number":
+                if not isinstance(argument, (ASTNode, NumberLiteral)):
+                    errors.append("ARGUMENT_TYPE_INVALID")
+            elif kind == "field":
+                if not isinstance(argument, ASTNode) or argument.op != "field":
+                    errors.append("ARGUMENT_TYPE_INVALID")
+            elif kind == "number":
+                if not isinstance(argument, NumberLiteral):
+                    errors.append("ARGUMENT_TYPE_INVALID")
+            elif kind == "positive_integer":
+                if not isinstance(argument, NumberLiteral) or not argument.is_integer:
+                    errors.append("ARGUMENT_TYPE_INVALID")
+                else:
+                    value = int(argument.decimal)
+                    if node.op == "delay" and value < 0:
+                        errors.append("LOOKAHEAD_DETECTED")
+                    if value < 1 or value > grammar.max_window:
+                        errors.append("WINDOW_OUT_OF_RANGE")
     for arg in node.args:
         if isinstance(arg, ASTNode):
-            _check_delay_lags(arg, errors)
+            _check_signatures(arg, grammar, errors)
 
 
 def _is_lookahead_field(field: str) -> bool:

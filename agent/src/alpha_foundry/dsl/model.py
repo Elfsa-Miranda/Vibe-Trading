@@ -1,7 +1,39 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Any
+
+
+@dataclass(frozen=True)
+class NumberLiteral:
+    canonical: str
+
+    @classmethod
+    def from_token(cls, token: str) -> "NumberLiteral":
+        try:
+            value = Decimal(token)
+        except InvalidOperation as exc:
+            raise ValueError("invalid numeric literal") from exc
+        if not value.is_finite():
+            raise ValueError("non-finite numeric literal")
+        if value == 0:
+            return cls("0")
+        normalized = value.normalize()
+        if normalized == normalized.to_integral_value():
+            return cls(str(int(normalized)))
+        return cls(format(normalized, "f").rstrip("0").rstrip("."))
+
+    @property
+    def decimal(self) -> Decimal:
+        return Decimal(self.canonical)
+
+    @property
+    def is_integer(self) -> bool:
+        return self.decimal == self.decimal.to_integral_value()
+
+    def to_number(self) -> int | float:
+        return int(self.decimal) if self.is_integer else float(self.decimal)
 
 
 @dataclass(frozen=True)
@@ -20,7 +52,9 @@ class ASTNode:
     @property
     def node_count(self) -> int:
         return 1 + sum(
-            arg.node_count for arg in self.args if isinstance(arg, ASTNode)
+            arg.node_count if isinstance(arg, ASTNode) else 1
+            for arg in self.args
+            if isinstance(arg, (ASTNode, NumberLiteral))
         )
 
     def operators(self) -> set[str]:
@@ -44,8 +78,8 @@ class ASTNode:
     def windows(self) -> list[int]:
         values: list[int] = []
         for arg in self.args:
-            if isinstance(arg, int):
-                values.append(arg)
+            if isinstance(arg, NumberLiteral) and arg.is_integer:
+                values.append(int(arg.decimal))
             elif isinstance(arg, ASTNode):
                 values.extend(arg.windows())
         return values

@@ -1,15 +1,19 @@
 from __future__ import annotations
 
-from src.alpha_foundry.dsl.model import ASTNode
+from src.alpha_foundry.dsl.grammar import DEFAULT_GRAMMAR, GrammarDefinition
+from src.alpha_foundry.dsl.model import ASTNode, NumberLiteral
 
-MAX_FORMULA_CHARS = 512
+MAX_FORMULA_CHARS = DEFAULT_GRAMMAR.max_formula_chars
 
 
 class FormulaParser:
+    def __init__(self, grammar: GrammarDefinition = DEFAULT_GRAMMAR) -> None:
+        self.grammar = grammar
+
     def parse(self, text: str) -> ASTNode:
-        if len(text) > MAX_FORMULA_CHARS:
+        if len(text) > self.grammar.max_formula_chars:
             raise ValueError("formula exceeds maximum length")
-        parser = _Parser(text)
+        parser = _Parser(text, self.grammar)
         parsed = parser.parse_expr()
         parser.skip_ws()
         if parser.pos != len(parser.text):
@@ -23,15 +27,16 @@ class FormulaParser:
 
 
 class _Parser:
-    def __init__(self, text: str) -> None:
+    def __init__(self, text: str, grammar: GrammarDefinition) -> None:
         self.text = text
+        self.grammar = grammar
         self.pos = 0
 
     def skip_ws(self) -> None:
         while self.pos < len(self.text) and self.text[self.pos].isspace():
             self.pos += 1
 
-    def parse_expr(self) -> ASTNode | int | float:
+    def parse_expr(self) -> ASTNode | NumberLiteral:
         self.skip_ws()
         if self.pos >= len(self.text):
             raise ValueError("unexpected end of formula")
@@ -43,11 +48,11 @@ class _Parser:
         if self.pos < len(self.text) and self.text[self.pos] == "(":
             self.pos += 1
             args = self.parse_args()
-            return ASTNode(op=ident, args=tuple(args))
-        return ASTNode(op="field", value=ident)
+            return ASTNode(op=self.grammar.canonical_operator(ident), args=tuple(args))
+        return ASTNode(op="field", value=self.grammar.canonical_field(ident))
 
-    def parse_args(self) -> list[ASTNode | int | float]:
-        args: list[ASTNode | int | float] = []
+    def parse_args(self) -> list[ASTNode | NumberLiteral]:
+        args: list[ASTNode | NumberLiteral] = []
         self.skip_ws()
         if self.pos < len(self.text) and self.text[self.pos] == ")":
             self.pos += 1
@@ -80,7 +85,7 @@ class _Parser:
             self.pos += 1
         return self.text[start:self.pos]
 
-    def parse_number(self) -> int | float:
+    def parse_number(self) -> NumberLiteral:
         start = self.pos
         if self.text[self.pos] == "-":
             self.pos += 1
@@ -90,5 +95,4 @@ class _Parser:
             self.pos += 1
             while self.pos < len(self.text) and self.text[self.pos].isdigit():
                 self.pos += 1
-            return float(self.text[start:self.pos])
-        return int(self.text[start:self.pos])
+        return NumberLiteral.from_token(self.text[start:self.pos])

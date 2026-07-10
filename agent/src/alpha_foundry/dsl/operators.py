@@ -6,7 +6,7 @@ from typing import cast
 import numpy as np
 import pandas as pd
 
-from src.alpha_foundry.dsl.model import ASTNode
+from src.alpha_foundry.dsl.model import ASTNode, NumberLiteral
 from src.alpha_foundry.dsl.parser import FormulaParser
 from src.alpha_foundry.dsl.validator import validate_expression
 
@@ -37,7 +37,12 @@ def evaluate_formula(text: str, panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
     return _frame(evaluate_ast(node, panel))
 
 
-def evaluate_ast(node: ASTNode | int | float, panel: dict[str, pd.DataFrame]) -> pd.DataFrame | int | float:
+def evaluate_ast(
+    node: ASTNode | NumberLiteral | int | float,
+    panel: dict[str, pd.DataFrame],
+) -> pd.DataFrame | int | float:
+    if isinstance(node, NumberLiteral):
+        return node.to_number()
     if isinstance(node, (int, float)):
         return node
     if node.op == "field":
@@ -72,13 +77,14 @@ def _apply(op: str, args: list[pd.DataFrame | int | float]) -> pd.DataFrame:
     if op == "neg":
         return -_frame(args[0])
     if op == "add":
-        return _frame(args[0]) + _frame(args[1])
+        return _frame(args[0]) + _frame_or_scalar(args[1])
     if op == "sub":
-        return _frame(args[0]) - _frame(args[1])
+        return _frame(args[0]) - _frame_or_scalar(args[1])
     if op == "mul":
-        return _frame(args[0]) * _frame(args[1])
+        return _frame(args[0]) * _frame_or_scalar(args[1])
     if op == "div_safe":
-        denom = _frame(args[1]).replace(0, np.nan)
+        denominator = _frame_or_scalar(args[1])
+        denom = denominator.replace(0, np.nan) if isinstance(denominator, pd.DataFrame) else (np.nan if denominator == 0 else denominator)
         return _frame(args[0]) / denom
     if op == "ts_mean":
         window = _int(args[1])
@@ -115,8 +121,14 @@ def _frame(value: pd.DataFrame | int | float) -> pd.DataFrame:
     return value
 
 
+def _frame_or_scalar(value: pd.DataFrame | int | float) -> pd.DataFrame | int | float:
+    return value
+
+
 def _int(value: pd.DataFrame | int | float) -> int:
     if isinstance(value, pd.DataFrame):
+        raise TypeError("operator expected a scalar integer argument")
+    if isinstance(value, float) and not value.is_integer():
         raise TypeError("operator expected a scalar integer argument")
     return int(value)
 
