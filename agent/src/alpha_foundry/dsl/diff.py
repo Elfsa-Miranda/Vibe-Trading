@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
+import re
 from types import MappingProxyType
 from typing import Any, Literal, Mapping
 
@@ -29,8 +31,8 @@ class ASTEditOperation:
     after: Mapping[str, Any] | None
 
     def __post_init__(self) -> None:
-        if not self.path and self.kind not in {"Replace", "Wrap", "Unwrap"}:
-            raise ValueError("only root replacement/wrapping may use an empty path")
+        if not self.path and self.kind in {"Insert", "Delete"}:
+            raise ValueError("root insertion/deletion is not a valid AST edit")
         object.__setattr__(self, "before", None if self.before is None else _freeze(dict(self.before)))
         object.__setattr__(self, "after", None if self.after is None else _freeze(dict(self.after)))
 
@@ -73,6 +75,16 @@ class ASTDiff:
 
 _EXTRACTOR_VERSION = "ast-diff.v1"
 _EXTRACTOR_HASH = canonical_json_hash({"extractor_version": _EXTRACTOR_VERSION, "algorithm": "safe-structural-recursive"})
+_NUMBER_RE = re.compile(r"^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$")
+_OPERATION_FIELDS = frozenset({"kind", "path", "before", "after"})
+_DIFF_FIELDS = frozenset(
+    {
+        "schema_version", "parent_expression_id", "child_expression_id",
+        "grammar_version", "grammar_hash", "extractor_version",
+        "extractor_hash", "operations", "normalized_edit_distance",
+        "reconstruction_hash",
+    }
+)
 
 
 def extract_ast_diff(
@@ -127,7 +139,9 @@ def _diff(parent: dict[str, Any], child: dict[str, Any], path: tuple[str | int, 
             _diff(parent_args[index], child_args[index], path + ("args", index), out)
         for index in range(shared, len(child_args)):
             out.append(ASTEditOperation("Insert", path + ("args", index), None, child_args[index]))
-        for index in range(shared, len(parent_args)):
+        # Delete from the end so applying more than one deletion cannot shift a
+        # later path and silently reconstruct another tree.
+        for index in range(len(parent_args) - 1, shared - 1, -1):
             out.append(ASTEditOperation("Delete", path + ("args", index), parent_args[index], None))
         return
     if parent.get("kind") == child.get("kind") and parent.get("kind") in {"field", "number"}:
@@ -139,25 +153,54 @@ def _diff(parent: dict[str, Any], child: dict[str, Any], path: tuple[str | int, 
 def apply_ast_diff(parent_ast: Mapping[str, Any], operations: tuple[ASTEditOperation, ...] | list[ASTEditOperation]) -> dict[str, Any]:
     """Apply extractor output only; rejects arbitrary/incomplete edit scripts."""
     current = thaw_canonical_ast(parent_ast)
+    _validate_canonical_node(current)
     for operation in operations:
         if operation.kind in {"Replace", "Wrap", "Unwrap", "ChangeParameter"}:
-            if operation.after is None:
-                raise ValueError("replacement operation must carry a child node")
+            if operation.before is None or operation.after is None:
+                raise ValueError("replacement operation must carry before and after nodes")
+            _require_before(current, operation)
+            _validate_canonical_node(operation.after)
             current = _replace_at_path(current, operation.path, thaw_canonical_ast(operation.after))
         elif operation.kind == "Insert":
-            if operation.after is None:
+            if operation.before is not None or operation.after is None:
                 raise ValueError("insert operation must carry a child node")
+            _validate_canonical_node(operation.after)
             current = _insert_at_path(current, operation.path, thaw_canonical_ast(operation.after))
         elif operation.kind == "Delete":
+            if operation.before is None or operation.after is not None:
+                raise ValueError("delete operation must carry only a before node")
+            _require_before(current, operation)
             current = _delete_at_path(current, operation.path)
         else:  # defensive for malformed data deserialized outside this module
             raise ValueError("unknown AST edit operation")
     return current
 
 
-def ast_diff_from_dict(payload: Mapping[str, Any]) -> ASTDiff:
+def ast_diff_from_dict(
+    payload: Mapping[str, Any],
+    *,
+    parent_ast: Mapping[str, Any] | None = None,
+    child_ast: Mapping[str, Any] | None = None,
+) -> ASTDiff:
     if payload.get("schema_version") != "ast_diff.v1":
         raise ValueError("unsupported AST diff schema")
+    if set(payload) != _DIFF_FIELDS:
+        raise ValueError("AST diff has unknown or missing fields")
+    if payload.get("extractor_version") != _EXTRACTOR_VERSION or payload.get("extractor_hash") != _EXTRACTOR_HASH:
+        raise ValueError("unregistered AST diff extractor")
+    raw_operations = payload.get("operations")
+    if not isinstance(raw_operations, (list, tuple)) or not raw_operations:
+        raise ValueError("AST diff cannot be empty")
+    for item in raw_operations:
+        if not isinstance(item, Mapping) or set(item) != _OPERATION_FIELDS:
+            raise ValueError("AST edit operation has unknown or missing fields")
+        if item.get("kind") not in {"Insert", "Delete", "Replace", "ChangeParameter", "Wrap", "Unwrap"}:
+            raise ValueError("unknown AST edit operation")
+        path = item.get("path")
+        if not isinstance(path, (list, tuple)) or len(path) > 32 or any(
+            isinstance(part, bool) or not isinstance(part, (str, int)) for part in path
+        ):
+            raise ValueError("AST edit path is malformed")
     operations = tuple(
         ASTEditOperation(
             kind=item["kind"],
@@ -165,11 +208,12 @@ def ast_diff_from_dict(payload: Mapping[str, Any]) -> ASTDiff:
             before=item.get("before"),
             after=item.get("after"),
         )
-        for item in payload.get("operations", [])
+        for item in raw_operations
     )
-    if not operations:
-        raise ValueError("AST diff cannot be empty")
-    return ASTDiff(
+    distance = payload["normalized_edit_distance"]
+    if isinstance(distance, bool) or not isinstance(distance, (int, float)) or not math.isfinite(float(distance)) or not 0.0 < float(distance) <= 1.0:
+        raise ValueError("normalized edit distance must be finite and in (0, 1]")
+    diff = ASTDiff(
         schema_version="ast_diff.v1",
         parent_expression_id=str(payload["parent_expression_id"]),
         child_expression_id=str(payload["child_expression_id"]),
@@ -178,9 +222,55 @@ def ast_diff_from_dict(payload: Mapping[str, Any]) -> ASTDiff:
         extractor_version=str(payload["extractor_version"]),
         extractor_hash=str(payload["extractor_hash"]),
         operations=operations,
-        normalized_edit_distance=float(payload["normalized_edit_distance"]),
+        normalized_edit_distance=float(distance),
         reconstruction_hash=str(payload["reconstruction_hash"]),
     )
+    if canonical_json_hash(diff.to_dict()) != canonical_json_hash(thaw_canonical_ast(payload)):
+        raise ValueError("AST diff is not canonical")
+    if parent_ast is not None:
+        reconstructed = apply_ast_diff(parent_ast, diff.operations)
+        if canonical_json_hash(reconstructed) != diff.reconstruction_hash:
+            raise ValueError("AST diff reconstruction hash mismatch")
+        if child_ast is not None and canonical_json_hash(reconstructed) != canonical_json_hash(thaw_canonical_ast(child_ast)):
+            raise ValueError("AST diff does not reconstruct the cited child")
+    return diff
+
+
+def _validate_canonical_node(node: Mapping[str, Any]) -> None:
+    if not isinstance(node, Mapping):
+        raise ValueError("canonical AST node must be an object")
+    kind = node.get("kind")
+    if kind == "number":
+        if set(node) != {"kind", "value"} or not isinstance(node.get("value"), str) or not _NUMBER_RE.fullmatch(node["value"]):
+            raise ValueError("malformed canonical number node")
+        return
+    if kind == "field":
+        if set(node) != {"kind", "name"} or not isinstance(node.get("name"), str) or not node["name"]:
+            raise ValueError("malformed canonical field node")
+        return
+    if kind == "call":
+        args = node.get("args")
+        if set(node) != {"kind", "op", "args"} or not isinstance(node.get("op"), str) or not isinstance(args, (list, tuple)):
+            raise ValueError("malformed canonical call node")
+        for child in args:
+            _validate_canonical_node(child)
+        return
+    raise ValueError("unknown canonical AST node kind")
+
+
+def _node_at_path(root: dict[str, Any], path: tuple[str | int, ...]) -> Any:
+    target: Any = root
+    for key in path:
+        try:
+            target = target[key]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ValueError("AST edit path does not exist") from exc
+    return target
+
+
+def _require_before(root: dict[str, Any], operation: ASTEditOperation) -> None:
+    if canonical_json_hash(_node_at_path(root, operation.path)) != canonical_json_hash(thaw_canonical_ast(operation.before)):
+        raise ValueError("AST edit before node does not match the parent")
 
 
 def _replace_at_path(root: dict[str, Any], path: tuple[str | int, ...], value: dict[str, Any]) -> dict[str, Any]:
@@ -198,8 +288,14 @@ def _insert_at_path(root: dict[str, Any], path: tuple[str | int, ...], value: di
         raise ValueError("insert path must address a call argument")
     target = root
     for key in path[:-2]:
-        target = target[key]  # type: ignore[index]
-    target["args"].insert(path[-1], value)
+        try:
+            target = target[key]  # type: ignore[index]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ValueError("insert path does not exist") from exc
+    index = path[-1]
+    if index < 0 or index > len(target.get("args", [])):
+        raise ValueError("insert index is out of bounds")
+    target["args"].insert(index, value)
     return root
 
 
@@ -208,8 +304,14 @@ def _delete_at_path(root: dict[str, Any], path: tuple[str | int, ...]) -> dict[s
         raise ValueError("delete path must address a call argument")
     target = root
     for key in path[:-2]:
-        target = target[key]  # type: ignore[index]
-    del target["args"][path[-1]]
+        try:
+            target = target[key]  # type: ignore[index]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ValueError("delete path does not exist") from exc
+    try:
+        del target["args"][path[-1]]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise ValueError("delete path does not exist") from exc
     return root
 
 
