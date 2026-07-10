@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Iterable, Mapping
+from typing import Iterable, Literal, Mapping, cast
 
+from src.alpha_foundry.dag.bootstrap import validate_registry_bootstrap_payload
 from src.alpha_foundry.dag.model import (
     DerivationEdge,
     FactorDAGError,
@@ -22,25 +23,35 @@ class FactorDAGProjector:
     """Construct the read-only audit DAG from ordered immutable event history."""
 
     def __init__(self, *, flags: ResolvedAGSFlags) -> None:
-        if not flags.enabled("VIBE_TRADING_FACTOR_DAG"):
+        required = (
+            "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_RESEARCH_EVENTS",
+            "VIBE_TRADING_FACTOR_DAG",
+        )
+        if any(not flags.enabled(name) for name in required):
             raise RuntimeError("factor DAG capability is disabled")
         self.flags = flags
 
     def project(self, events: Iterable[ResearchEventEnvelope]) -> FactorDAGProjection:
         ordered = list(events)
+        _validate_envelope_chain(ordered)
         nodes: dict[str, FactorNode] = {}
         roots: dict[str, RegistryRootNode] = {}
         edges: list[DerivationEdge] = []
-        terminal_hashes: set[str] = set()
+        terminal_events: dict[str, ResearchEventEnvelope] = {}
+        evaluation_events: dict[str, ResearchEventEnvelope] = {}
         for event in ordered:
             if event.event_type == "TrialTerminated":
-                terminal_hashes.add(event.event_hash)
+                terminal_events[event.event_hash] = event
+            elif event.event_type == "EvaluationRecorded":
+                evaluation_events[event.event_hash] = event
             elif event.event_type == "FactorDefinitionRecorded":
                 self._apply_definition(nodes, event)
-            elif event.event_type == "RegistryBootstrapRecorded":
+            elif event.event_type in {"RegistryBootstrapRecorded", "RegistryBootstrapRecordedV2"}:
                 self._apply_registry_bootstrap(roots, event)
             elif event.event_type == "DerivationRecorded":
-                self._apply_derivation(nodes, edges, terminal_hashes, event)
+                self._apply_derivation(
+                    nodes, edges, terminal_events, evaluation_events, event
+                )
         return self._finalize(ordered, nodes, roots, edges)
 
     def resume(
@@ -84,6 +95,7 @@ class FactorDAGProjector:
             canonical_ast_hash=str(payload["canonical_ast_hash"]),
             grammar_version=str(payload["grammar_version"]),
             grammar_hash=str(payload["grammar_hash"]),
+            originating_trial_id=str(payload["metadata"]["originating_trial_id"]),
             definition_event_hash=event.event_hash,
         )
         prior = nodes.get(factor_spec_id)
@@ -98,6 +110,13 @@ class FactorDAGProjector:
         roots: dict[str, RegistryRootNode], event: ResearchEventEnvelope
     ) -> None:
         payload = event.payload
+        if event.event_type == "RegistryBootstrapRecordedV2":
+            try:
+                validate_registry_bootstrap_payload(payload)
+            except (KeyError, TypeError, ValueError) as exc:
+                raise FactorDAGError(
+                    "registry bootstrap identity is not reproducible"
+                ) from exc
         snapshot_id = str(payload["snapshot_id"])
         for raw in payload["roots"]:
             alpha_id = str(raw["alpha_id"])
@@ -108,9 +127,30 @@ class FactorDAGProjector:
                 root_id=root_id,
                 snapshot_id=snapshot_id,
                 alpha_id=alpha_id,
-                status=str(raw["status"]),  # validated by the closed payload schema
-                expression_id=(None if raw["expression_id"] is None else str(raw["expression_id"])),
+                status=cast(
+                    Literal["canonical_dsl", "legacy_opaque"], str(raw["status"])
+                ),
+                expression_id=(
+                    None if raw["expression_id"] is None else str(raw["expression_id"])
+                ),
                 legacy_formula_hash=str(raw["legacy_formula_hash"]),
+                canonical_formula=(
+                    None
+                    if raw.get("canonical_formula") is None
+                    else str(raw["canonical_formula"])
+                ),
+                source_hash=(
+                    None if raw.get("source_hash") is None else str(raw["source_hash"])
+                ),
+                source_status=cast(
+                    Literal["available", "unavailable"],
+                    str(raw.get("source_status", "unavailable")),
+                ),
+                source_reason=(
+                    None
+                    if raw.get("source_reason") is None
+                    else str(raw["source_reason"])
+                ),
                 bootstrap_event_hash=event.event_hash,
             )
 
@@ -118,7 +158,8 @@ class FactorDAGProjector:
     def _apply_derivation(
         nodes: Mapping[str, FactorNode],
         edges: list[DerivationEdge],
-        terminal_hashes: set[str],
+        terminal_events: Mapping[str, ResearchEventEnvelope],
+        evaluation_events: Mapping[str, ResearchEventEnvelope],
         event: ResearchEventEnvelope,
     ) -> None:
         payload = event.payload
@@ -132,8 +173,22 @@ class FactorDAGProjector:
             raise FactorDAGError("lineage self-edge is forbidden")
         if len(set(parents)) != len(parents):
             raise FactorDAGError("derivation contains duplicate parent")
-        if str(payload["trial_terminal_event_hash"]) not in terminal_hashes:
+        terminal = terminal_events.get(str(payload["trial_terminal_event_hash"]))
+        if terminal is None:
             raise FactorDAGError("derivation has no prior terminal trial event")
+        originating_trial_id = nodes[child].originating_trial_id
+        if str(terminal.payload["trial_id"]) != originating_trial_id:
+            raise FactorDAGError("derivation terminal is not bound to the child trial")
+        if terminal.payload["status"] not in {"success", "reject"}:
+            raise FactorDAGError("derivation terminal is not an evaluated outcome")
+        evaluation_hash = terminal.payload["evaluation_event_hash"]
+        evaluation = evaluation_events.get(str(evaluation_hash)) if evaluation_hash else None
+        if evaluation is None or (
+            evaluation.payload["trial_id"] != originating_trial_id
+            or evaluation.payload["factor_spec_id"] != child
+            or evaluation.payload["data_scope"] not in {"valid", "train_valid"}
+        ):
+            raise FactorDAGError("derivation lacks matching train/valid evaluation evidence")
         if any(edge.child_factor_spec_id == child for edge in edges):
             raise FactorDAGError("multiple lineage derivations for one child are ambiguous")
         children = _children_by_parent(edges)
@@ -144,7 +199,10 @@ class FactorDAGProjector:
                 child_factor_spec_id=child,
                 parent_factor_spec_ids=parents,
                 trial_terminal_event_hash=str(payload["trial_terminal_event_hash"]),
-                derivation_kind=str(payload["derivation_kind"]),  # schema closed
+                derivation_kind=cast(
+                    Literal["mutation", "crossover", "manual_registered"],
+                    str(payload["derivation_kind"]),
+                ),
                 event_hash=event.event_hash,
             )
         )
@@ -168,6 +226,7 @@ class FactorDAGProjector:
                     "canonical_ast_hash": node.canonical_ast_hash,
                     "grammar_version": node.grammar_version,
                     "grammar_hash": node.grammar_hash,
+                    "originating_trial_id": node.originating_trial_id,
                     "definition_event_hash": node.definition_event_hash,
                 }
                 for _, node in sorted(nodes.items())
@@ -180,6 +239,10 @@ class FactorDAGProjector:
                     "status": root.status,
                     "expression_id": root.expression_id,
                     "legacy_formula_hash": root.legacy_formula_hash,
+                    "canonical_formula": root.canonical_formula,
+                    "source_hash": root.source_hash,
+                    "source_status": root.source_status,
+                    "source_reason": root.source_reason,
                     "bootstrap_event_hash": root.bootstrap_event_hash,
                 }
                 for _, root in sorted(roots.items())
@@ -217,6 +280,21 @@ def _children_by_parent(edges: Iterable[DerivationEdge]) -> dict[str, set[str]]:
     return children
 
 
+def _validate_envelope_chain(events: list[ResearchEventEnvelope]) -> None:
+    previous: str | None = None
+    for event in events:
+        if event.previous_event_hash != previous:
+            raise FactorDAGError("factor DAG source event chain is out of order")
+        event_dict = event.to_dict()
+        if canonical_json_hash(event_dict["payload"]) != event.payload_hash:
+            raise FactorDAGError("factor DAG source payload hash is invalid")
+        envelope = event_dict
+        envelope.pop("event_hash")
+        if canonical_json_hash(envelope) != event.event_hash:
+            raise FactorDAGError("factor DAG source event hash is invalid")
+        previous = event.event_hash
+
+
 def _has_path(children: Mapping[str, set[str]], start: str, target: str) -> bool:
     pending = [start]
     seen: set[str] = set()
@@ -232,19 +310,29 @@ def _has_path(children: Mapping[str, set[str]], start: str, target: str) -> bool
 
 
 def _depths(nodes: Mapping[str, FactorNode], edges: Iterable[DerivationEdge]) -> dict[str, int]:
+    import heapq
+
+    edge_list = list(edges)
     parents_by_child = {
-        edge.child_factor_spec_id: edge.parent_factor_spec_ids for edge in edges
+        edge.child_factor_spec_id: edge.parent_factor_spec_ids for edge in edge_list
     }
-    memo: dict[str, int] = {}
-
-    def depth(node_id: str) -> int:
-        if node_id in memo:
-            return memo[node_id]
-        parents = parents_by_child.get(node_id, ())
-        memo[node_id] = 0 if not parents else 1 + max(depth(parent) for parent in parents)
-        return memo[node_id]
-
-    return {node_id: depth(node_id) for node_id in sorted(nodes)}
+    children = _children_by_parent(edge_list)
+    remaining = {node_id: len(parents_by_child.get(node_id, ())) for node_id in nodes}
+    ready = [node_id for node_id, count in remaining.items() if count == 0]
+    heapq.heapify(ready)
+    depth = {node_id: 0 for node_id in ready}
+    processed = 0
+    while ready:
+        node_id = heapq.heappop(ready)
+        processed += 1
+        for child in sorted(children.get(node_id, ())):
+            remaining[child] -= 1
+            depth[child] = max(depth.get(child, 0), depth[node_id] + 1)
+            if remaining[child] == 0:
+                heapq.heappush(ready, child)
+    if processed != len(nodes):
+        raise FactorDAGError("factor DAG depth computation found a cycle")
+    return {node_id: depth[node_id] for node_id in sorted(nodes)}
 
 
 __all__ = ["FactorDAGProjector"]

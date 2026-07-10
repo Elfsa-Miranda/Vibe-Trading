@@ -18,6 +18,7 @@ class FactorNode:
     canonical_ast_hash: str
     grammar_version: str
     grammar_hash: str
+    originating_trial_id: str
     definition_event_hash: str
 
 
@@ -29,6 +30,10 @@ class RegistryRootNode:
     status: Literal["canonical_dsl", "legacy_opaque"]
     expression_id: str | None
     legacy_formula_hash: str
+    canonical_formula: str | None
+    source_hash: str | None
+    source_status: Literal["available", "unavailable"]
+    source_reason: str | None
     bootstrap_event_hash: str
 
 
