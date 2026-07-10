@@ -2,20 +2,16 @@
 
 from __future__ import annotations
 
-import json
-import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
 from src.alpha_foundry.dsl.diff import extract_ast_diff
 from src.alpha_foundry.dsl.identity import ExpressionIdentity
+from src.alpha_foundry.memory.utility import SCORECARD_MEDIA_TYPE, mean_valid_rank_icir_utility
 from src.alpha_quality.flags import ResolvedAGSFlags
 from src.research_ledger.events import EventDraft, ResearchEventEnvelope, ResearchEventStore
 from src.research_ledger.hash_utils import canonical_json_hash, utc_now_iso
-
-
-_SCORECARD_MEDIA_TYPE = "application/vnd.vibe.alpha-quality-scorecard+json"
 
 
 @dataclass(frozen=True)
@@ -236,35 +232,18 @@ class ProcessMemoryService:
             ref
             for ref in evaluation.payload["artifact_refs"]
             if ref["artifact_hash"] == evaluation.payload["scorecard_hash"]
-            and ref["media_type"] == _SCORECARD_MEDIA_TYPE
+            and ref["media_type"] == SCORECARD_MEDIA_TYPE
         ]
         if len(references) != 1:
             raise ValueError("evaluation must cite exactly one immutable scorecard artifact")
         path = Path(self.store.artifact_root, *str(references[0]["relative_path"]).split("/"))
         if self.store.hash_artifact(path) != evaluation.payload["scorecard_hash"]:
             raise ValueError("scorecard artifact changed after evaluation")
-        try:
-            scorecard = json.loads(path.read_text(encoding="utf-8"), parse_constant=self._reject_json_constant)
-        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-            raise ValueError("scorecard artifact is not strict JSON") from exc
-        if not isinstance(scorecard, Mapping) or scorecard.get("schema_version") != "alpha_quality_scorecard.v1":
-            raise ValueError("unsupported scorecard artifact schema")
-        if scorecard.get("factor_id") != child_factor_spec_id or scorecard.get("scope") != "discovery":
-            raise ValueError("scorecard factor or scope does not match process evidence")
-        if scorecard.get("data_snapshot_ref") != data_snapshot_hash:
-            raise ValueError("scorecard data snapshot does not match frozen action")
-        try:
-            by_horizon = scorecard["predictive"]["by_horizon"]
-            values = [
-                float(item["by_split"]["valid"]["rank_icir"])
-                for item in by_horizon.values()
-                if item["by_split"].get("valid", {}).get("rank_icir") is not None
-            ]
-        except (KeyError, TypeError, ValueError, AttributeError) as exc:
-            raise ValueError("scorecard lacks valid RankICIR evidence") from exc
-        if not values or any(not math.isfinite(value) for value in values):
-            raise ValueError("scorecard validation utility is unavailable or non-finite")
-        return sum(values) / len(values)
+        return mean_valid_rank_icir_utility(
+            path,
+            expected_factor_spec_id=child_factor_spec_id,
+            expected_data_snapshot_hash=data_snapshot_hash,
+        )
 
     def _one_event(self, event_type: str, entity_id: str) -> ResearchEventEnvelope:
         events = self.store.query_events(event_type=event_type, entity_id=entity_id)
@@ -285,10 +264,5 @@ class ProcessMemoryService:
     def _require_retry_matches(event: ResearchEventEnvelope, expected: Mapping[str, Any]) -> None:
         if any(event.payload.get(key) != value for key, value in expected.items()):
             raise ValueError("idempotent process-memory retry conflicts with existing evidence")
-
-    @staticmethod
-    def _reject_json_constant(value: str) -> Any:
-        raise ValueError(f"non-finite JSON constant is forbidden: {value}")
-
 
 __all__ = ["ProcessMemoryService", "ValidationUtilityPolicy"]

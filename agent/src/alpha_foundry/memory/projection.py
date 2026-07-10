@@ -72,6 +72,24 @@ class EpisodicProjector:
                 raise ValueError("episodic outcome cites the wrong evidence type")
             child_id = str(payload["child_factor_spec_id"])
             parent_id = str(action.payload["parent_factor_spec_id"])
+            for name in (
+                "trial_id", "policy_hash", "utility_policy_hash",
+                "data_snapshot_hash", "regime_config_hash", "run_group_id",
+            ):
+                if payload[name] != action.payload[name]:
+                    raise ValueError("episodic outcome does not match its frozen action")
+            if (
+                terminal.payload["trial_id"] != payload["trial_id"]
+                or terminal.payload["status"] not in {"success", "reject"}
+                or evaluation.payload["trial_id"] != payload["trial_id"]
+                or evaluation.payload["factor_spec_id"] != child_id
+                or evaluation.payload["data_scope"] != payload["data_scope"]
+                or evaluation.payload["scorecard_hash"] != payload["scorecard_hash"]
+                or derivation.payload["child_factor_spec_id"] != child_id
+                or derivation.payload["trial_terminal_event_hash"] != terminal.event_hash
+                or parent_id not in derivation.payload["parent_factor_spec_ids"]
+            ):
+                raise ValueError("episodic outcome evidence binding is inconsistent")
             parent = definitions.get(parent_id)
             child = definitions.get(child_id)
             if parent is None or child is None:
@@ -83,6 +101,13 @@ class EpisodicProjector:
             )
             if canonical_json_hash(diff.to_dict()) != payload["ast_diff_hash"]:
                 raise ValueError("episodic outcome AST diff hash is invalid")
+            if (
+                diff.parent_expression_id != parent.payload["expression_id"]
+                or diff.child_expression_id != child.payload["expression_id"]
+                or diff.grammar_version != child.payload["grammar_version"]
+                or diff.grammar_hash != child.payload["grammar_hash"]
+            ):
+                raise ValueError("episodic outcome AST identity binding is inconsistent")
             motif = derive_motif(diff)
             base = float(action.payload["base_expected_utility"])
             utility = float(payload["observed_validation_utility"])

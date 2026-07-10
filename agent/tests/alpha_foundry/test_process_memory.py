@@ -5,13 +5,17 @@ from dataclasses import replace
 
 import pytest
 
-from src.alpha_foundry.dag import FactorDAGService
+from src.alpha_foundry.dag import FactorDAGProjector, FactorDAGService
 from src.alpha_foundry.dsl.identity import FactorIdentityService, FactorSpecSemantics
 from src.alpha_foundry.dsl.canonical import thaw_canonical_ast
-from src.alpha_foundry.memory import EpisodicProjector, ProcessMemoryService, WorkingMemory
+from src.alpha_foundry.memory import (
+    EpisodicProjector, FactualMemoryView, ProcessMemoryService, WorkingMemory,
+)
 from src.alpha_foundry.memory.model import ProcessMemoryObservation
 from src.alpha_quality.flags import ResolvedAGSFlags
-from src.research_ledger.events import EventDraft, EventTransitionError, ResearchEventStore
+from src.research_ledger.events import (
+    EventDraft, EventTransitionError, EventValidationError, ResearchEventStore,
+)
 from src.research_ledger.hash_utils import canonical_json_hash, utc_now_iso
 
 
@@ -160,6 +164,87 @@ def test_motif_is_derived_from_diff_and_records_evidence_hashes(tmp_path) -> Non
     assert observation.motif_version == "ast-motif.v1"
 
 
+def test_replay_and_factual_discovery_view_are_terminal_and_deterministic(tmp_path) -> None:
+    store, _, _, _, _ = _record_valid_outcome(tmp_path)
+    events = store.query_events()
+    first = EpisodicProjector().project(events)
+    second = EpisodicProjector().project(tuple(events))
+    dag = FactorDAGProjector(flags=_flags()).project(events)
+    factual = FactualMemoryView.from_terminal_discovery_events(dag, events)
+
+    assert first == second
+    assert first.projection_hash == second.projection_hash
+    assert factual.factor_ids() == (first.observations[0].child_factor_spec_id,)
+
+
+def test_final_and_forward_events_do_not_change_eligible_memory(tmp_path) -> None:
+    store, _, _, _, _ = _record_valid_outcome(tmp_path)
+    before = EpisodicProjector().project(store.query_events())
+    child_id = before.observations[0].child_factor_spec_id
+    store.append_event(
+        EventDraft(
+            event_type="TrialStarted", entity_id="final-trial", run_id="monitor",
+            payload_schema_version="trial_started.v1", idempotency_key="final-trial:start",
+            payload={
+                "trial_id": "final-trial", "candidate_id": "final-candidate",
+                "data_scope": "final_test", "objective": "final_only",
+                "started_at": utc_now_iso(),
+            },
+        )
+    )
+    store.append_event(
+        EventDraft(
+            event_type="EvaluationRecorded", entity_id="final-evaluation", run_id="monitor",
+            payload_schema_version="evaluation_recorded.v1",
+            idempotency_key="final-evaluation:record",
+            payload={
+                "evaluation_id": "final-evaluation", "trial_id": "final-trial",
+                "factor_spec_id": child_id, "data_scope": "final_test",
+                "scorecard_hash": canonical_json_hash({"final": True}),
+                "artifact_refs": [], "metadata": {},
+            },
+        )
+    )
+    plan_hash = canonical_json_hash({"plan": "monitor-only"})
+    store.append_event(
+        EventDraft(
+            event_type="ForwardPlanRecorded", entity_id="plan-monitor", run_id="monitor",
+            payload_schema_version="forward_plan_recorded.v1", idempotency_key="plan-monitor",
+            payload={
+                "plan_id": "plan-monitor", "factor_spec_id": child_id,
+                "plan_hash": plan_hash, "minimum_observations": 12,
+                "policy_hash": canonical_json_hash({"policy": "monitor"}),
+            },
+        )
+    )
+    after = EpisodicProjector().project(store.query_events())
+    assert after.observations == before.observations
+    assert after.posteriors == before.posteriors
+
+
+def test_trial_start_and_action_survive_generation_crash(tmp_path) -> None:
+    store = _store(tmp_path)
+    identity = FactorIdentityService(store=store, flags=_flags())
+    memory = ProcessMemoryService(store=store, flags=_flags())
+    parent = identity.record_attempt(
+        trial_id="parent", run_id="run", candidate_id="parent",
+        formula="rank(close)", semantics=_semantics(),
+    )
+    watermark = store.replay().watermark_event_hash
+    assert parent.factor_spec_id and watermark
+    memory.freeze_action(
+        action_id="crash-action", trial_id="crash-trial",
+        parent_factor_spec_id=parent.factor_spec_id, candidate_id="crash-candidate",
+        base_expected_utility=0.0, eligible_event_watermark=watermark,
+        policy_hash=canonical_json_hash({"policy": "v2"}),
+        data_snapshot_hash=canonical_json_hash({"snapshot": "v"}),
+        run_group_id="crash-group", seed=2, candidate_budget=1, run_id="run",
+    )
+    assert len(store.query_events(event_type="TrialStarted", entity_id="crash-trial")) == 1
+    assert len(store.query_events(event_type="ProcessActionFrozenV2", entity_id="crash-action")) == 1
+    assert EpisodicProjector().project(store.query_events()).observations == ()
+
+
 def test_action_freeze_must_precede_child_definition(tmp_path) -> None:
     store = _store(tmp_path)
     identity = FactorIdentityService(store=store, flags=_flags())
@@ -187,6 +272,17 @@ def test_action_freeze_must_precede_child_definition(tmp_path) -> None:
 
 def test_duplicate_action_outcome_and_forged_diff_fail_closed(tmp_path) -> None:
     store, action, _, _, outcome = _record_valid_outcome(tmp_path)
+    forged_utility = thaw_canonical_ast(outcome.payload)
+    forged_utility["outcome_id"] = "forged-utility"
+    forged_utility["observed_validation_utility"] = 99.0
+    with pytest.raises(EventValidationError, match="deterministically rebuilt"):
+        store.append_event(
+            EventDraft(
+                event_type="ProcessOutcomeRecordedV2", entity_id="forged-utility",
+                run_id="run", payload_schema_version="process_outcome_recorded.v2",
+                payload=forged_utility, idempotency_key="process-outcome-v2:forged-utility",
+            )
+        )
     forged = thaw_canonical_ast(outcome.payload)
     forged["outcome_id"] = "forged"
     forged["ast_diff"]["extractor_hash"] = canonical_json_hash({"fake": True})

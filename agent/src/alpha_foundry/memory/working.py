@@ -25,8 +25,8 @@ class WorkingCandidate:
 
 class WorkingMemory:
     def __init__(self, *, capacity: int = 256) -> None:
-        if capacity < 1:
-            raise ValueError("working memory capacity must be positive")
+        if capacity < 1 or capacity > 10_000:
+            raise ValueError("working memory capacity must be between 1 and 10000")
         self.capacity = capacity
         self._items: deque[WorkingCandidate] = deque(maxlen=capacity)
         self._closed = False
