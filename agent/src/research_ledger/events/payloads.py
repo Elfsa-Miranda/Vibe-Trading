@@ -335,6 +335,15 @@ _PAYLOAD_SPECS: dict[str, PayloadSpec] = {
             "policy_hash": _hash,
         },
     ),
+    "OutcomeDataAccessed": PayloadSpec(
+        "outcome_data_accessed.v1",
+        {
+            "access_id": _string,
+            "factor_spec_id": _string,
+            "data_scope": _enum("valid", "test", "final_test"),
+            "accessed_at": _timestamp,
+        },
+    ),
     "FalsificationResultRecorded": PayloadSpec(
         "falsification_result_recorded.v1",
         {
