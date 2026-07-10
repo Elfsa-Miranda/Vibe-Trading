@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Iterable, Mapping
 
 from src.alpha_foundry.dag.model import FactorDAGProjection
 from src.research_ledger.events import ResearchEventEnvelope
+
+
+_FACTUAL_VIEW_AUTHORITY = object()
 
 
 @dataclass(frozen=True)
@@ -24,8 +27,11 @@ class DiscoveryFactorEvidence:
 class FactualMemoryView:
     dag: FactorDAGProjection
     evidence_by_factor_spec_id: Mapping[str, DiscoveryFactorEvidence]
+    _authority: object = field(repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        if self._authority is not _FACTUAL_VIEW_AUTHORITY:
+            raise TypeError("factual memory must be built from terminal discovery events")
         object.__setattr__(
             self,
             "evidence_by_factor_spec_id",
@@ -76,7 +82,14 @@ class FactualMemoryView:
                 scorecard_hash=str(evaluation.payload["scorecard_hash"]),
                 data_scope=str(evaluation.payload["data_scope"]),
             )
-        return cls(dag=dag, evidence_by_factor_spec_id=eligible)
+        return cls(
+            dag=dag,
+            evidence_by_factor_spec_id=eligible,
+            _authority=_FACTUAL_VIEW_AUTHORITY,
+        )
+
+    def is_authorized(self) -> bool:
+        return self._authority is _FACTUAL_VIEW_AUTHORITY
 
     def factor_ids(self) -> tuple[str, ...]:
         return tuple(sorted(self.evidence_by_factor_spec_id))

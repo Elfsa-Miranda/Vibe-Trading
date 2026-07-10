@@ -227,6 +227,83 @@ def _reason_codes(value: Any, path: str) -> None:
             raise EventValidationError(f"{path} contains an invalid reason code")
 
 
+def _retriever_component_list(value: Any, path: str) -> None:
+    if not isinstance(value, (list, tuple)):
+        raise EventValidationError(f"{path} must be a list")
+    seen_factors: set[str] = set()
+    seen_actions: set[str] = set()
+    expected = {
+        "factor_spec_id", "action_id", "motif", "node_kind",
+        "output_panel_hash", "semantic_model_id", "semantic_model_version",
+        "semantic_embedding_hash", "cost_evidence_hash", "valdiv",
+        "semdiv", "syndiv", "topology_score", "base_score",
+        "memory_adjustment", "action_score", "confidence", "selected",
+        "selection_propensity", "warnings", "veto_reason",
+    }
+    for index, item in enumerate(value):
+        item_path = f"{path}[{index}]"
+        if not isinstance(item, Mapping) or set(item) != expected:
+            raise EventValidationError(f"{item_path} has unknown or missing component fields")
+        for name in ("factor_spec_id", "action_id", "motif"):
+            _string(item[name], f"{item_path}.{name}")
+        for name in ("semantic_model_id", "semantic_model_version"):
+            _string(item[name], f"{item_path}.{name}")
+        for name in ("output_panel_hash", "semantic_embedding_hash", "cost_evidence_hash"):
+            _hash(item[name], f"{item_path}.{name}")
+        if item["factor_spec_id"] in seen_factors or item["action_id"] in seen_actions:
+            raise EventValidationError(f"{path} contains duplicate factor or action identity")
+        seen_factors.add(item["factor_spec_id"])
+        seen_actions.add(item["action_id"])
+        _enum("leaf", "nonleaf")(item["node_kind"], f"{item_path}.node_kind")
+        for name in (
+            "valdiv", "semdiv", "syndiv", "topology_score", "confidence",
+            "selection_propensity",
+        ):
+            _probability(item[name], f"{item_path}.{name}")
+        for name in ("base_score", "memory_adjustment", "action_score"):
+            _finite_number(item[name], f"{item_path}.{name}")
+        if float(item["base_score"]) <= 0.0:
+            raise EventValidationError(f"{item_path}.base_score must be positive")
+        _boolean(item["selected"], f"{item_path}.selected")
+        _string_list(item["warnings"], f"{item_path}.warnings")
+        _nullable_string(item["veto_reason"], f"{item_path}.veto_reason")
+        if item["selected"] and float(item["selection_propensity"]) <= 0.0:
+            raise EventValidationError(f"{item_path} selected component needs a propensity")
+        if item["veto_reason"] is not None and item["selected"]:
+            raise EventValidationError(f"{item_path} vetoed component cannot be selected")
+
+
+def _retriever_policy_config(value: Any, path: str) -> None:
+    if not isinstance(value, Mapping):
+        raise EventValidationError(f"{path} must be an object")
+    expected = {
+        "policy_version", "epsilon", "memory_weight", "residual_clip",
+        "veto_exploration_probability", "softmax_temperature",
+        "maximum_candidate_budget",
+    }
+    if set(value) != expected:
+        raise EventValidationError(f"{path} has unknown or missing policy fields")
+    _enum("topology_shadow_policy.v2")(value["policy_version"], f"{path}.policy_version")
+    for name in (
+        "epsilon", "memory_weight", "residual_clip",
+        "veto_exploration_probability", "softmax_temperature",
+    ):
+        _finite_number(value[name], f"{path}.{name}")
+    _positive_integer(value["maximum_candidate_budget"], f"{path}.maximum_candidate_budget")
+    if not 0.0 < float(value["epsilon"]) <= 1e-3:
+        raise EventValidationError(f"{path}.epsilon is out of bounds")
+    if not 0.0 <= float(value["memory_weight"]) <= 1.0:
+        raise EventValidationError(f"{path}.memory_weight is out of bounds")
+    if not 0.0 < float(value["residual_clip"]) <= 1.0:
+        raise EventValidationError(f"{path}.residual_clip is out of bounds")
+    if not 0.0 <= float(value["veto_exploration_probability"]) <= 0.25:
+        raise EventValidationError(f"{path}.veto exploration is out of bounds")
+    if not 0.0 < float(value["softmax_temperature"]) <= 10.0:
+        raise EventValidationError(f"{path}.softmax temperature is out of bounds")
+    if int(value["maximum_candidate_budget"]) > 100_000:
+        raise EventValidationError(f"{path}.maximum candidate budget is out of bounds")
+
+
 @dataclass(frozen=True)
 class PayloadSpec:
     version: str
@@ -413,6 +490,25 @@ _PAYLOAD_SPECS: dict[str, PayloadSpec] = {
             "policy_hash": _hash,
             "eligible_event_watermark": _nullable_hash,
             "veto_reason": _nullable_string,
+        },
+    ),
+    "RetrieverDecisionV2Recorded": PayloadSpec(
+        "retriever_decision_recorded.v2",
+        {
+            "decision_id": _string,
+            "decision_hash": _hash,
+            "selected_factor_spec_ids": _string_list,
+            "seed": _integer,
+            "policy_version": _string,
+            "policy_hash": _hash,
+            "policy_config": _retriever_policy_config,
+            "eligible_event_watermark": _hash,
+            "data_snapshot_hash": _hash,
+            "candidate_budget": _candidate_budget,
+            "official_output_hash": _hash,
+            "propensity_semantics": _enum("sequential_softmax_draw_probability.v1"),
+            "components": _retriever_component_list,
+            "shadow_only": _boolean,
         },
     ),
     "FalsificationContractRegistered": PayloadSpec(
@@ -723,6 +819,42 @@ def _validate_cross_field_rules(event_type: str, payload: Mapping[str, Any]) -> 
             raise EventValidationError("success terminal outcome requires a research decision")
     if event_type == "ForwardPlanRecorded" and payload["minimum_observations"] <= 0:
         raise EventValidationError("minimum_observations must be positive")
+    if event_type == "RetrieverDecisionV2Recorded":
+        if not payload["shadow_only"]:
+            raise EventValidationError("retriever v2 is shadow-only before activation")
+        selected = [
+            component["factor_spec_id"]
+            for component in payload["components"] if component["selected"]
+        ]
+        if set(selected) != set(payload["selected_factor_spec_ids"]):
+            raise EventValidationError("retriever selected IDs do not match its components")
+        if len(payload["selected_factor_spec_ids"]) != len(set(payload["selected_factor_spec_ids"])):
+            raise EventValidationError("retriever selected IDs must be unique")
+        if len(selected) > payload["candidate_budget"]:
+            raise EventValidationError("retriever selection exceeds its frozen budget")
+        if payload["candidate_budget"] > payload["policy_config"]["maximum_candidate_budget"]:
+            raise EventValidationError("retriever budget exceeds its frozen policy")
+        if payload["policy_version"] != payload["policy_config"]["policy_version"]:
+            raise EventValidationError("retriever policy version is inconsistent")
+        if canonical_json_hash(payload["policy_config"]) != payload["policy_hash"]:
+            raise EventValidationError("retriever policy hash is inconsistent")
+        decision_content = {
+            "schema_version": "retriever_shadow_decision.v2",
+            "selected_factor_spec_ids": payload["selected_factor_spec_ids"],
+            "seed": payload["seed"],
+            "policy_version": payload["policy_version"],
+            "policy_hash": payload["policy_hash"],
+            "policy_config": payload["policy_config"],
+            "eligible_event_watermark": payload["eligible_event_watermark"],
+            "data_snapshot_hash": payload["data_snapshot_hash"],
+            "candidate_budget": payload["candidate_budget"],
+            "official_output_hash": payload["official_output_hash"],
+            "propensity_semantics": payload["propensity_semantics"],
+            "components": payload["components"],
+            "shadow_only": payload["shadow_only"],
+        }
+        if canonical_json_hash(decision_content) != payload["decision_hash"]:
+            raise EventValidationError("retriever v2 decision hash is invalid")
     if event_type == "SequentialProtocolRegistered":
         if payload["maximum_looks"] < 2:
             raise EventValidationError("sequential protocol requires at least two looks")
@@ -896,6 +1028,8 @@ def envelope_diagnostics(
         warnings.add("REDUCED_DURABILITY")
     if event_type == "GenerationFailureRecorded":
         hard_failures.add(str(payload["failure_code"]))
+    if event_type == "RetrieverDecisionV2Recorded":
+        warnings.add("TOPOLOGY_RETRIEVER_SHADOW_ONLY")
     if event_type == "TrialTerminated":
         codes = {str(code) for code in payload["reason_codes"]}
         if payload["status"] == "skip":

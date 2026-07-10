@@ -166,6 +166,7 @@ def test_closed_payload_registry_covers_every_required_event_type() -> None:
         "EvaluationRecorded",
         "TrialTerminated",
         "RetrieverDecisionRecorded",
+        "RetrieverDecisionV2Recorded",
         "FalsificationContractRegistered",
         "SequentialProtocolRegistered",
         "SequentialLookRecorded",
@@ -286,15 +287,63 @@ def test_every_registered_payload_schema_validates_a_complete_production_shape()
             "evaluation_event_hash": None,
             "terminated_at": timestamp,
         },
-        "RetrieverDecisionRecorded": {
+            "RetrieverDecisionRecorded": {
             "decision_id": "retriever-1",
             "selected_factor_spec_ids": ["factor-1"],
             "selection_propensity": 0.5,
             "seed": 7,
             "policy_hash": digest,
             "eligible_event_watermark": digest,
-            "veto_reason": None,
-        },
+                "veto_reason": None,
+            },
+            "RetrieverDecisionV2Recorded": {
+                "decision_id": "retriever-v2-1",
+                "decision_hash": digest,
+                "selected_factor_spec_ids": ["factor-1"],
+                "seed": 7,
+                "policy_version": "topology_shadow_policy.v2",
+                "policy_hash": digest,
+                "policy_config": {
+                    "policy_version": "topology_shadow_policy.v2",
+                    "epsilon": 1e-9,
+                    "memory_weight": 0.5,
+                    "residual_clip": 0.25,
+                    "veto_exploration_probability": 0.05,
+                    "softmax_temperature": 1.0,
+                    "maximum_candidate_budget": 10000,
+                },
+                "eligible_event_watermark": digest,
+                "data_snapshot_hash": digest,
+                "candidate_budget": 1,
+                "official_output_hash": digest,
+                "propensity_semantics": "sequential_softmax_draw_probability.v1",
+                "components": [
+                    {
+                        "factor_spec_id": "factor-1",
+                        "action_id": "action-1",
+                        "motif": "Wrap:rank",
+                        "node_kind": "leaf",
+                        "output_panel_hash": digest,
+                        "semantic_model_id": "embedding-model",
+                        "semantic_model_version": "1",
+                        "semantic_embedding_hash": digest,
+                        "cost_evidence_hash": digest,
+                        "valdiv": 0.5,
+                        "semdiv": 0.5,
+                        "syndiv": 0.5,
+                        "topology_score": 0.125,
+                        "base_score": 0.1,
+                        "memory_adjustment": 0.0,
+                        "action_score": -2.3,
+                        "confidence": 0.0,
+                        "selected": True,
+                        "selection_propensity": 1.0,
+                        "warnings": [],
+                        "veto_reason": None,
+                    }
+                ],
+                "shadow_only": True,
+            },
         "FalsificationContractRegistered": {
             "contract_id": "contract-1",
             "contract_hash": digest,
@@ -468,6 +517,26 @@ def test_every_registered_payload_schema_validates_a_complete_production_shape()
             "limitations": decision_v2["limitations"],
             "within_tier_score": decision_v2["within_tier_score"],
             "forward_success_claim": decision_v2["forward_success_claim"],
+        }
+    )
+
+    retriever_v2 = samples["RetrieverDecisionV2Recorded"]
+    retriever_v2["policy_hash"] = canonical_json_hash(retriever_v2["policy_config"])
+    retriever_v2["decision_hash"] = canonical_json_hash(
+        {
+            "schema_version": "retriever_shadow_decision.v2",
+            "selected_factor_spec_ids": retriever_v2["selected_factor_spec_ids"],
+            "seed": retriever_v2["seed"],
+            "policy_version": retriever_v2["policy_version"],
+            "policy_hash": retriever_v2["policy_hash"],
+            "policy_config": retriever_v2["policy_config"],
+            "eligible_event_watermark": retriever_v2["eligible_event_watermark"],
+            "data_snapshot_hash": retriever_v2["data_snapshot_hash"],
+            "candidate_budget": retriever_v2["candidate_budget"],
+            "official_output_hash": retriever_v2["official_output_hash"],
+            "propensity_semantics": retriever_v2["propensity_semantics"],
+            "components": retriever_v2["components"],
+            "shadow_only": retriever_v2["shadow_only"],
         }
     )
 

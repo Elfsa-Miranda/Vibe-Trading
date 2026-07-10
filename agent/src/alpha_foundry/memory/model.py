@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
+
+
+_EPISODIC_PROJECTION_AUTHORITY = object()
 
 
 @dataclass(frozen=True)
@@ -50,6 +53,22 @@ class EpisodicProjection:
     observations: tuple[ProcessMemoryObservation, ...]
     posteriors: tuple[ProcessPosterior, ...]
     projection_hash: str
+    _authority: object = field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._authority is not _EPISODIC_PROJECTION_AUTHORITY:
+            raise TypeError("episodic projection must be built by EpisodicProjector")
 
 
-__all__ = ["EpisodicProjection", "ProcessMemoryObservation", "ProcessPosterior"]
+def authorized_episodic_projection(**values: object) -> EpisodicProjection:
+    return EpisodicProjection(**values, _authority=_EPISODIC_PROJECTION_AUTHORITY)  # type: ignore[arg-type]
+
+
+def is_authorized_episodic_projection(value: EpisodicProjection) -> bool:
+    return value._authority is _EPISODIC_PROJECTION_AUTHORITY
+
+
+__all__ = [
+    "EpisodicProjection", "ProcessMemoryObservation", "ProcessPosterior",
+    "authorized_episodic_projection", "is_authorized_episodic_projection",
+]
