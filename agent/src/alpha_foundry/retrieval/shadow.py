@@ -51,6 +51,8 @@ class ShadowRetriever:
         seed: int,
         candidate_budget: int,
     ) -> ShadowDecision:
+        if not isinstance(evidence, DiscoveryEvidenceView):
+            raise TypeError("retriever accepts DiscoveryEvidenceView only")
         if query.projection.projection_hash != evidence.factual.dag.projection_hash:
             raise ValueError("retriever DAG differs from its discovery evidence view")
         if query.projection.source_watermark_event_hash != evidence.source_watermark:

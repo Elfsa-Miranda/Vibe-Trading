@@ -78,6 +78,8 @@ def _defaults(kind: str) -> dict[str, object]:
             "limitations": ["TRAIN_VALID_ONLY"],
         },
         "final_test": {
+            "source_artifact_hash": canonical_json_hash({"final": "artifact"}),
+            "view_hash": canonical_json_hash({"final": "view"}),
             "frozen": True,
             "one_shot": True,
             "contaminated": False,
@@ -86,6 +88,7 @@ def _defaults(kind: str) -> dict[str, object]:
             "limitations": ["ONE_SHOT_FINAL"],
         },
         "forward_plan": {
+            "plan_hash": canonical_json_hash({"forward": "plan"}),
             "frozen": True,
             "minimum_observations": 20,
             "success_claim": False,
@@ -226,6 +229,20 @@ def test_final_oos_ic_alone_cannot_create_paper_candidate(tmp_path: Path) -> Non
 
     assert result.decision == "candidate_zoo"
     assert "FINAL_TEST_DID_NOT_PASS_FROZEN_QUALITY" in result.warnings
+
+
+def test_final_scope_contamination_is_a_noncompensatory_reject(tmp_path: Path) -> None:
+    repository = DecisionEvidenceRepository(tmp_path / "evidence")
+    result = _runner(repository).run(
+        _refs(
+            repository,
+            scorecard={"validation_rank_ic": 999.0},
+            final_test={"contaminated": True, "quality_passed": False},
+        )
+    )
+
+    assert result.decision == "reject"
+    assert "FINAL_TEST_CONTAMINATED" in result.reasons
 
 
 def test_regime_dependence_is_metadata_not_new_decision_level(tmp_path: Path) -> None:

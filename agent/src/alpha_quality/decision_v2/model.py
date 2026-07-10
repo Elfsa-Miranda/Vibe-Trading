@@ -114,6 +114,8 @@ _FIELDS: dict[EvidenceKind, dict[str, str]] = {
         "limitations": "limitations",
     },
     "final_test": {
+        "source_artifact_hash": "hash",
+        "view_hash": "hash",
         "frozen": "bool",
         "one_shot": "bool",
         "contaminated": "bool",
@@ -122,6 +124,7 @@ _FIELDS: dict[EvidenceKind, dict[str, str]] = {
         "limitations": "limitations",
     },
     "forward_plan": {
+        "plan_hash": "hash",
         "frozen": "bool",
         "minimum_observations": "positive_int",
         "success_claim": "bool",
@@ -147,6 +150,8 @@ def _validate_payload(kind: EvidenceKind, payload: Mapping[str, Any]) -> dict[st
                 _validate_bool(value, path)
         elif validator == "optional_finite":
             _validate_optional_finite(value, path)
+        elif validator == "hash":
+            _require_hash(value, path)
         elif validator == "limitations":
             _validate_limitations(value, path)
         elif validator == "positive_int":

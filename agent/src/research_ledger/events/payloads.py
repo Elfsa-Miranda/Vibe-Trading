@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
 
@@ -59,6 +59,14 @@ def _timestamp(value: Any, path: str) -> None:
         raise EventValidationError(f"{path} must be ISO-8601") from exc
     if parsed.tzinfo is None:
         raise EventValidationError(f"{path} must include a timezone")
+
+
+def _date(value: Any, path: str) -> None:
+    _string(value, path)
+    try:
+        date.fromisoformat(value)
+    except ValueError as exc:
+        raise EventValidationError(f"{path} must be an ISO date") from exc
 
 
 def _integer(value: Any, path: str) -> None:
@@ -755,6 +763,113 @@ _PAYLOAD_SPECS: dict[str, PayloadSpec] = {
             "artifact_refs": _artifact_list,
         },
     ),
+    "FinalCandidateFrozen": PayloadSpec(
+        "final_candidate_frozen.v1",
+        {
+            "freeze_id": _string,
+            "candidate_schema_version": _enum("frozen_final_candidate.v1"),
+            "factor_spec_id": _string,
+            "definition_hash": _hash,
+            "transform_pipeline_hash": _hash,
+            "cost_model_hash": _hash,
+            "regime_config_hash": _hash,
+            "policy_hash": _hash,
+            "data_snapshot_hash": _hash,
+            "frozen_at": _timestamp,
+            "candidate_hash": _hash,
+        },
+    ),
+    "FinalTestCapabilityIssued": PayloadSpec(
+        "final_test_capability_issued.v1",
+        {
+            "capability_id": _string,
+            "capability_fingerprint": _hash,
+            "candidate_hash": _hash,
+            "factor_spec_id": _string,
+            "declared_run_id": _string,
+            "data_snapshot_hash": _hash,
+            "period_start": _date,
+            "period_end": _date,
+            "allowed_fields": _nonempty_string_list,
+            "issued_at": _timestamp,
+        },
+    ),
+    "FinalTestAccessRecorded": PayloadSpec(
+        "final_test_access_recorded.v1",
+        {
+            "access_id": _string,
+            "capability_fingerprint": _hash,
+            "candidate_hash": _hash,
+            "factor_spec_id": _string,
+            "declared_run_id": _string,
+            "request_hash": _hash,
+            "outcome": _enum("allowed", "denied"),
+            "reason_code": _string,
+            "contaminated": _boolean,
+            "accessed_at": _timestamp,
+        },
+    ),
+    "FinalTestArtifactRecorded": PayloadSpec(
+        "final_test_artifact_recorded.v1",
+        {
+            "artifact_id": _string,
+            "artifact_hash": _hash,
+            "factor_spec_id": _string,
+            "candidate_hash": _hash,
+            "definition_hash": _hash,
+            "transform_pipeline_hash": _hash,
+            "cost_model_hash": _hash,
+            "regime_config_hash": _hash,
+            "access_event_hash": _hash,
+            "policy_hash": _hash,
+            "data_snapshot_hash": _hash,
+            "effective_observations": _positive_integer,
+            "quality_passed": _boolean,
+            "contaminated": _boolean,
+            "artifact_refs": _artifact_list,
+        },
+    ),
+    "ForwardPlanV2Recorded": PayloadSpec(
+        "forward_plan_recorded.v2",
+        {
+            "plan_schema_version": _enum("frozen_forward_plan.v2"),
+            "plan_id": _string,
+            "factor_spec_id": _string,
+            "final_test_artifact_hash": _hash,
+            "definition_hash": _hash,
+            "transform_pipeline_hash": _hash,
+            "cost_model_hash": _hash,
+            "regime_config_hash": _hash,
+            "policy_hash": _hash,
+            "expected_horizon": _positive_integer,
+            "minimum_effective_observations": _positive_integer,
+            "minimum_rank_ic": _finite_number,
+            "maximum_drawdown": _positive_finite_number,
+            "kill_rules_hash": _hash,
+            "created_at": _timestamp,
+            "plan_hash": _hash,
+            "artifact_refs": _artifact_list,
+        },
+    ),
+    "ForwardObservationV2Recorded": PayloadSpec(
+        "forward_observation_recorded.v2",
+        {
+            "observation_schema_version": _enum("forward_observation.v2"),
+            "observation_id": _string,
+            "plan_id": _string,
+            "plan_hash": _hash,
+            "period_start": _date,
+            "period_end": _date,
+            "effective_observations": _positive_integer,
+            "rank_ic": _finite_number,
+            "net_return": _finite_number,
+            "drawdown": _finite_number,
+            "previous_observation_hash": _nullable_hash,
+            "observed_at": _timestamp,
+            "observation_hash": _hash,
+            "artifact_refs": _artifact_list,
+        },
+    ),
     "ForwardPlanRecorded": PayloadSpec(
         "forward_plan_recorded.v1",
         {
@@ -1068,6 +1183,74 @@ def _validate_cross_field_rules(event_type: str, payload: Mapping[str, Any]) -> 
         }
         if canonical_json_hash(decision_content) != payload["decision_hash"]:
             raise EventValidationError("Decision v2 hash does not match deterministic content")
+    if event_type == "FinalCandidateFrozen":
+        candidate_content = {
+            "schema_version": payload["candidate_schema_version"],
+            "factor_spec_id": payload["factor_spec_id"],
+            "definition_hash": payload["definition_hash"],
+            "transform_pipeline_hash": payload["transform_pipeline_hash"],
+            "cost_model_hash": payload["cost_model_hash"],
+            "regime_config_hash": payload["regime_config_hash"],
+            "policy_hash": payload["policy_hash"],
+            "data_snapshot_hash": payload["data_snapshot_hash"],
+            "frozen_at": payload["frozen_at"],
+        }
+        if canonical_json_hash(candidate_content) != payload["candidate_hash"]:
+            raise EventValidationError("frozen final candidate hash mismatch")
+    if event_type == "FinalTestCapabilityIssued":
+        if payload["period_end"] < payload["period_start"]:
+            raise EventValidationError("final capability period is reversed")
+        if payload["allowed_fields"] != sorted(set(payload["allowed_fields"])):
+            raise EventValidationError("final allowed fields must be sorted and unique")
+    if event_type == "FinalTestAccessRecorded":
+        if payload["outcome"] == "allowed" and payload["contaminated"]:
+            raise EventValidationError("allowed final access cannot already be contaminated")
+        if payload["outcome"] == "denied" and not payload["contaminated"]:
+            raise EventValidationError("denied final access must taint the candidate")
+    if event_type == "FinalTestArtifactRecorded":
+        if payload["contaminated"] and payload["quality_passed"]:
+            raise EventValidationError("contaminated final artifact cannot pass quality")
+    if event_type == "ForwardPlanV2Recorded":
+        plan_content = {
+            "schema_version": payload["plan_schema_version"],
+            "factor_spec_id": payload["factor_spec_id"],
+            "final_test_artifact_hash": payload["final_test_artifact_hash"],
+            "definition_hash": payload["definition_hash"],
+            "transform_pipeline_hash": payload["transform_pipeline_hash"],
+            "cost_model_hash": payload["cost_model_hash"],
+            "regime_config_hash": payload["regime_config_hash"],
+            "policy_hash": payload["policy_hash"],
+            "expected_horizon": payload["expected_horizon"],
+            "minimum_effective_observations": payload["minimum_effective_observations"],
+            "minimum_rank_ic": payload["minimum_rank_ic"],
+            "maximum_drawdown": payload["maximum_drawdown"],
+            "kill_rules_hash": payload["kill_rules_hash"],
+            "created_at": payload["created_at"],
+        }
+        if canonical_json_hash(plan_content) != payload["plan_hash"]:
+            raise EventValidationError("frozen forward plan hash mismatch")
+        expected_id = "forward-plan-" + payload["plan_hash"].removeprefix("sha256:")[:24]
+        if payload["plan_id"] != expected_id:
+            raise EventValidationError("forward plan ID does not derive from plan hash")
+    if event_type == "ForwardObservationV2Recorded":
+        if payload["period_end"] < payload["period_start"] or payload["drawdown"] < 0.0:
+            raise EventValidationError("invalid forward observation period or drawdown")
+        observation_content = {
+            "schema_version": payload["observation_schema_version"],
+            "observation_id": payload["observation_id"],
+            "plan_id": payload["plan_id"],
+            "plan_hash": payload["plan_hash"],
+            "period_start": payload["period_start"],
+            "period_end": payload["period_end"],
+            "effective_observations": payload["effective_observations"],
+            "rank_ic": payload["rank_ic"],
+            "net_return": payload["net_return"],
+            "drawdown": payload["drawdown"],
+            "previous_observation_hash": payload["previous_observation_hash"],
+            "observed_at": payload["observed_at"],
+        }
+        if canonical_json_hash(observation_content) != payload["observation_hash"]:
+            raise EventValidationError("forward observation hash mismatch")
 
 
 def envelope_diagnostics(
@@ -1109,6 +1292,12 @@ def envelope_diagnostics(
         warnings |= {str(code) for code in payload["caps"]}
         if payload["decision"] == "reject":
             hard_failures |= {str(code) for code in payload["reasons"]}
+    if event_type == "FinalTestAccessRecorded" and payload["outcome"] == "denied":
+        hard_failures.add("FINAL_TEST_CONTAMINATED")
+    if event_type == "FinalTestArtifactRecorded" and payload["contaminated"]:
+        hard_failures.add("FINAL_TEST_CONTAMINATED")
+    if event_type in {"ForwardPlanV2Recorded", "ForwardObservationV2Recorded"}:
+        warnings.add("FORWARD_MONITORING_ONLY")
     if event_type == "QualityDecisionV2Recorded":
         warnings |= {str(code) for code in payload["warnings"]}
         warnings |= {str(code) for code in payload["caps"]}
