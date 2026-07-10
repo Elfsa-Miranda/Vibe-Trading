@@ -109,6 +109,7 @@ class FactorIdentityAttempt:
     factor_spec_id: str | None
     expression_id: str | None
     error_codes: tuple[str, ...] = ()
+    expression: ExpressionIdentity | None = None
 
 
 def _parse_and_validate(formula: str, grammar: GrammarDefinition) -> ASTNode:
@@ -220,14 +221,14 @@ class FactorIdentityService:
 
         existing_status = self._existing_terminal(trial_id, candidate_id)
         if existing_status is not None:
-            return FactorIdentityAttempt(existing_status, identity.factor_spec_id, identity.expression.expression_id)
+            return FactorIdentityAttempt(existing_status, identity.factor_spec_id, identity.expression.expression_id, expression=identity.expression)
         existing_definition_for_trial = self.store.query_events(
             event_type="FactorDefinitionRecorded", entity_id=identity.factor_spec_id
         )
         if existing_definition_for_trial and str(
             existing_definition_for_trial[0].payload["metadata"].get("originating_trial_id", "")
         ) == trial_id:
-            return FactorIdentityAttempt("recorded", identity.factor_spec_id, identity.expression.expression_id)
+            return FactorIdentityAttempt("recorded", identity.factor_spec_id, identity.expression.expression_id, expression=identity.expression)
 
         self._append_trial_started(trial_id, run_id, candidate_id)
 
@@ -237,9 +238,19 @@ class FactorIdentityService:
         if existing:
             origin = str(existing[0].payload["metadata"].get("originating_trial_id", ""))
             if origin == trial_id:
-                return FactorIdentityAttempt("recorded", identity.factor_spec_id, identity.expression.expression_id)
+                return FactorIdentityAttempt(
+                    "recorded",
+                    identity.factor_spec_id,
+                    identity.expression.expression_id,
+                    expression=identity.expression,
+                )
             self._append_duplicate_terminal(trial_id, run_id)
-            return FactorIdentityAttempt("duplicate", identity.factor_spec_id, identity.expression.expression_id)
+            return FactorIdentityAttempt(
+                "duplicate",
+                identity.factor_spec_id,
+                identity.expression.expression_id,
+                expression=identity.expression,
+            )
 
         try:
             self.store.append_event(
@@ -269,8 +280,8 @@ class FactorIdentityService:
             # A competing writer won the same content identity.  It is a real
             # duplicate, not an error or a second DAG node.
             self._append_duplicate_terminal(trial_id, run_id)
-            return FactorIdentityAttempt("duplicate", identity.factor_spec_id, identity.expression.expression_id)
-        return FactorIdentityAttempt("recorded", identity.factor_spec_id, identity.expression.expression_id)
+            return FactorIdentityAttempt("duplicate", identity.factor_spec_id, identity.expression.expression_id, expression=identity.expression)
+        return FactorIdentityAttempt("recorded", identity.factor_spec_id, identity.expression.expression_id, expression=identity.expression)
 
     def _existing_terminal(self, trial_id: str, candidate_id: str) -> str | None:
         """Return the existing terminal status for an exact idempotent retry.

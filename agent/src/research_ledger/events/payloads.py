@@ -79,6 +79,13 @@ def _probability(value: Any, path: str) -> None:
         raise EventValidationError(f"{path} must be finite and between zero and one")
 
 
+def _finite_number(value: Any, path: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise EventValidationError(f"{path} must be numeric")
+    if not math.isfinite(float(value)):
+        raise EventValidationError(f"{path} must be finite")
+
+
 def _boolean(value: Any, path: str) -> None:
     if not isinstance(value, bool):
         raise EventValidationError(f"{path} must be boolean")
@@ -87,6 +94,16 @@ def _boolean(value: Any, path: str) -> None:
 def _mapping(value: Any, path: str) -> None:
     if not isinstance(value, Mapping):
         raise EventValidationError(f"{path} must be an object")
+
+
+def _nullable_mapping(value: Any, path: str) -> None:
+    if value is not None:
+        _mapping(value, path)
+
+
+def _nullable_finite_number(value: Any, path: str) -> None:
+    if value is not None:
+        _finite_number(value, path)
 
 
 def _string_list(value: Any, path: str) -> None:
@@ -221,6 +238,36 @@ _PAYLOAD_SPECS: dict[str, PayloadSpec] = {
             "parent_factor_spec_ids": _nonempty_string_list,
             "trial_terminal_event_hash": _hash,
             "derivation_kind": _enum("mutation", "crossover", "manual_registered"),
+        },
+    ),
+    "ProcessActionFrozen": PayloadSpec(
+        "process_action_frozen.v1",
+        {
+            "action_id": _string,
+            "trial_id": _string,
+            "parent_factor_spec_id": _string,
+            "candidate_id": _string,
+            "base_expected_utility": _finite_number,
+            "eligible_event_watermark": _nullable_hash,
+            "policy_hash": _hash,
+            "seed": _integer,
+            "candidate_budget": _nonnegative_integer,
+            "frozen_at": _timestamp,
+        },
+    ),
+    "ProcessOutcomeRecorded": PayloadSpec(
+        "process_outcome_recorded.v1",
+        {
+            "outcome_id": _string,
+            "action_id": _string,
+            "trial_id": _string,
+            "terminal_event_hash": _hash,
+            "data_scope": _DATA_SCOPE,
+            "child_factor_spec_id": _nullable_string,
+            "observed_validation_utility": _nullable_finite_number,
+            "ast_diff": _nullable_mapping,
+            "available_at": _timestamp,
+            "policy_hash": _hash,
         },
     ),
     "GenerationFailureRecorded": PayloadSpec(
