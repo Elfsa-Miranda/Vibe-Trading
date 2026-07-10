@@ -412,6 +412,7 @@ class ResearchEventStore:
             "OutcomeDataAccessed": "access_id",
             "FalsificationResultRecorded": "result_id",
             "MechanismEvidenceIndexRecorded": "mei_id",
+            "ComplementEvidenceRecorded": "complement_id",
             "QualityDecisionRecorded": "decision_id",
             "ForwardPlanRecorded": "plan_id",
             "ForwardObservationRecorded": "observation_id",
@@ -531,6 +532,9 @@ class ResearchEventStore:
         if event_type == "MechanismEvidenceIndexRecorded":
             self._validate_mechanism_evidence_index_transition(conn, payload)
             return
+        if event_type == "ComplementEvidenceRecorded":
+            self._validate_complement_evidence_transition(conn, payload)
+            return
         if event_type == "ForwardObservationRecorded":
             plan = conn.execute(
                 """
@@ -578,6 +582,56 @@ class ResearchEventStore:
             ).fetchone()
             if evaluation is None or json.loads(evaluation["payload"])["trial_id"] != trial_id:
                 raise EventTransitionError("successful trial evaluation evidence is missing or mismatched")
+
+    @staticmethod
+    def _validate_complement_evidence_transition(
+        conn: sqlite3.Connection,
+        payload: Mapping[str, Any],
+    ) -> None:
+        factor_spec_id = str(payload["factor_spec_id"])
+        definition = conn.execute(
+            """
+            SELECT 1 FROM research_events
+            WHERE event_type = 'FactorDefinitionRecorded' AND entity_id = ?
+            """,
+            (factor_spec_id,),
+        ).fetchone()
+        if definition is None:
+            raise EventTransitionError("complement evidence has no prior factor definition")
+
+        evaluation_row = conn.execute(
+            """
+            SELECT payload FROM research_events
+            WHERE event_type = 'EvaluationRecorded' AND event_hash = ?
+            """,
+            (payload["source_evaluation_event_hash"],),
+        ).fetchone()
+        terminal_row = conn.execute(
+            """
+            SELECT payload FROM research_events
+            WHERE event_type = 'TrialTerminated' AND event_hash = ?
+            """,
+            (payload["source_terminal_event_hash"],),
+        ).fetchone()
+        if evaluation_row is None or terminal_row is None:
+            raise EventTransitionError("complement evidence lacks prior evaluation or terminal evidence")
+
+        evaluation = json.loads(str(evaluation_row["payload"]))
+        terminal = json.loads(str(terminal_row["payload"]))
+        if evaluation["factor_spec_id"] != factor_spec_id:
+            raise EventTransitionError("complement evidence factor does not match evaluation")
+        if evaluation["data_scope"] != payload["data_scope"]:
+            raise EventTransitionError("complement evidence scope does not match evaluation")
+        if evaluation["data_scope"] not in {"valid", "train_valid"}:
+            raise EventTransitionError("complement evidence requires train/valid evaluation")
+        if terminal["trial_id"] != evaluation["trial_id"]:
+            raise EventTransitionError("complement terminal and evaluation trials do not match")
+        if terminal["status"] not in {"success", "reject"}:
+            raise EventTransitionError("complement evidence requires an evaluated terminal outcome")
+        if terminal["status"] == "success" and (
+            terminal["evaluation_event_hash"] != payload["source_evaluation_event_hash"]
+        ):
+            raise EventTransitionError("successful terminal does not reference complement evaluation")
 
     @staticmethod
     def _event_payloads(
@@ -995,7 +1049,10 @@ class ResearchEventStore:
         started: set[str] = set()
         terminated: set[str] = set()
         evaluations: dict[str, str] = {}
+        evaluation_payloads: dict[str, Mapping[str, Any]] = {}
         terminal_hashes: set[str] = set()
+        terminal_payloads: dict[str, Mapping[str, Any]] = {}
+        definitions: set[str] = set()
         contracts: dict[str, Mapping[str, Any]] = {}
         accessed_factors: set[str] = set()
         protocols: dict[str, Mapping[str, Any]] = {}
@@ -1009,7 +1066,9 @@ class ResearchEventStore:
         plans: set[str] = set()
         for event in events:
             payload = event.payload
-            if event.event_type == "TrialStarted":
+            if event.event_type == "FactorDefinitionRecorded":
+                definitions.add(str(payload["factor_spec_id"]))
+            elif event.event_type == "TrialStarted":
                 trial_id = str(payload["trial_id"])
                 if trial_id in started or trial_id in terminated:
                     return False
@@ -1019,6 +1078,7 @@ class ResearchEventStore:
                 if trial_id not in started or trial_id in terminated:
                     return False
                 evaluations[event.event_hash] = trial_id
+                evaluation_payloads[event.event_hash] = payload
             elif event.event_type == "TrialTerminated":
                 trial_id = str(payload["trial_id"])
                 if trial_id not in started or trial_id in terminated:
@@ -1029,6 +1089,7 @@ class ResearchEventStore:
                         return False
                 terminated.add(trial_id)
                 terminal_hashes.add(event.event_hash)
+                terminal_payloads[event.event_hash] = payload
             elif event.event_type == "DerivationRecorded":
                 if payload["trial_terminal_event_hash"] not in terminal_hashes:
                     return False
@@ -1169,6 +1230,29 @@ class ResearchEventStore:
                         ResearchEventStore._mechanism_index_content(payload)
                     )
                     != payload["mei_hash"]
+                ):
+                    return False
+            elif event.event_type == "ComplementEvidenceRecorded":
+                factor_spec_id = str(payload["factor_spec_id"])
+                evaluation = evaluation_payloads.get(
+                    str(payload["source_evaluation_event_hash"])
+                )
+                terminal = terminal_payloads.get(
+                    str(payload["source_terminal_event_hash"])
+                )
+                if factor_spec_id not in definitions or evaluation is None or terminal is None:
+                    return False
+                if (
+                    evaluation["factor_spec_id"] != factor_spec_id
+                    or evaluation["data_scope"] != payload["data_scope"]
+                    or evaluation["data_scope"] not in {"valid", "train_valid"}
+                    or terminal["trial_id"] != evaluation["trial_id"]
+                    or terminal["status"] not in {"success", "reject"}
+                ):
+                    return False
+                if terminal["status"] == "success" and (
+                    terminal["evaluation_event_hash"]
+                    != payload["source_evaluation_event_hash"]
                 ):
                     return False
             elif event.event_type == "ForwardPlanRecorded":

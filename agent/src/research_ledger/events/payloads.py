@@ -477,6 +477,37 @@ _PAYLOAD_SPECS: dict[str, PayloadSpec] = {
             "limitation_codes": _reason_codes,
         },
     ),
+    "ComplementEvidenceRecorded": PayloadSpec(
+        "complement_evidence_recorded.v2",
+        {
+            "complement_id": _string,
+            "factor_spec_id": _string,
+            "complement_hash": _hash,
+            "policy_version": _string,
+            "policy_hash": _hash,
+            "data_scope": _enum("train_valid", "valid"),
+            "snapshot_hash": _hash,
+            "source_evaluation_event_hash": _hash,
+            "source_terminal_event_hash": _hash,
+            "pool_factor_spec_ids": _string_list,
+            "identity_hash": _hash,
+            "residual_hash": _hash,
+            "portfolio_hash": _hash,
+            "portfolio_construction_hash": _hash,
+            "cost_model_hash": _hash,
+            "capacity_model_hash": _hash,
+            "exposure_model_hash": _hash,
+            "status": _enum(
+                "duplicate",
+                "unavailable",
+                "insufficient",
+                "nonpositive_marginal_value",
+                "complementary",
+            ),
+            "cap": _nullable_string,
+            "artifact_refs": _artifact_list,
+        },
+    ),
     "QualityDecisionRecorded": PayloadSpec(
         "quality_decision_recorded.v1",
         {
@@ -706,6 +737,12 @@ def _validate_cross_field_rules(event_type: str, payload: Mapping[str, Any]) -> 
             required_reason_by_state[payload["ordinal_state"]]
         ):
             raise EventValidationError("MEI state requires a versioned truth-table reason")
+    if event_type == "ComplementEvidenceRecorded":
+        missing_status = payload["status"] in {"unavailable", "insufficient"}
+        if missing_status and payload["cap"] != "RESEARCH_ONLY":
+            raise EventValidationError("missing complement evidence must cap research_only")
+        if not missing_status and payload["cap"] is not None:
+            raise EventValidationError("complete complement evidence cannot carry a cap")
 
 
 def envelope_diagnostics(
@@ -733,6 +770,13 @@ def envelope_diagnostics(
             warnings.add("MECHANISM_EVIDENCE_INCONCLUSIVE")
         elif payload["ordinal_state"] == "falsified":
             hard_failures.add("MECHANISM_FALSIFIED")
+    if event_type == "ComplementEvidenceRecorded":
+        if payload["status"] == "duplicate":
+            hard_failures.add("COMPLEMENT_DUPLICATE_IDENTITY")
+        elif payload["status"] in {"unavailable", "insufficient"}:
+            warnings.add("COMPLEMENT_EVIDENCE_INCONCLUSIVE")
+        elif payload["status"] == "nonpositive_marginal_value":
+            warnings.add("COMPLEMENT_NET_VALUE_NONPOSITIVE")
     if event_type == "QualityDecisionRecorded":
         warnings |= {str(code) for code in payload["warnings"]}
         warnings |= {str(code) for code in payload["caps"]}
