@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from src.alpha_quality.flags import ResolvedAGSFlags
+from src.alpha_foundry.dsl.grammar import DEFAULT_GRAMMAR
 from src.research_ledger.events import (
     ArtifactReferenceError,
     EventDraft,
@@ -157,6 +158,7 @@ def test_closed_payload_registry_covers_every_required_event_type() -> None:
         "TrialStarted",
         "FactorDefinitionRecorded",
         "RegistryBootstrapRecorded",
+        "RegistryBootstrapRecordedV2",
         "DerivationRecorded",
         "ProcessActionFrozen",
         "ProcessOutcomeRecorded",
@@ -209,6 +211,23 @@ def test_every_registered_payload_schema_validates_a_complete_production_shape()
                         "status": "legacy_opaque",
                         "expression_id": None,
                         "legacy_formula_hash": digest,
+                    }
+                ],
+            },
+            "RegistryBootstrapRecordedV2": {
+                "snapshot_id": "registry-v2-1",
+                "registry_snapshot_hash": digest,
+                "registry_code_hash": digest,
+                "grammar_version": DEFAULT_GRAMMAR.semantic_version,
+                "grammar_hash": DEFAULT_GRAMMAR.content_hash,
+                "grammar_definition": DEFAULT_GRAMMAR.to_dict(),
+                "roots": [
+                    {
+                        "alpha_id": "fixture_alpha", "status": "legacy_opaque",
+                        "expression_id": None, "canonical_formula": None,
+                        "legacy_formula_hash": digest, "source_hash": None,
+                        "source_status": "unavailable",
+                        "source_reason": "REGISTRY_SOURCE_API_UNAVAILABLE",
                     }
                 ],
             },

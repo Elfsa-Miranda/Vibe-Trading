@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from src.alpha_foundry.dag.bootstrap import RegistryBootstrapSource, build_registry_bootstrap_payload
 from src.alpha_foundry.dag.projector import FactorDAGProjector
+from src.alpha_foundry.dsl.grammar import DEFAULT_GRAMMAR, GrammarDefinition
 from src.alpha_quality.flags import ResolvedAGSFlags
 from src.research_ledger.events import EventDraft, ResearchEventStore
 from src.research_ledger.hash_utils import canonical_json_hash
@@ -13,7 +14,11 @@ class FactorDAGService:
     """Validate against the current derived projection before appending events."""
 
     def __init__(self, *, store: ResearchEventStore, flags: ResolvedAGSFlags) -> None:
-        if not flags.enabled("VIBE_TRADING_FACTOR_DAG"):
+        required = (
+            "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_RESEARCH_EVENTS",
+            "VIBE_TRADING_FACTOR_DAG",
+        )
+        if any(not flags.enabled(name) for name in required):
             raise RuntimeError("factor DAG capability is disabled")
         self.store = store
         self.projector = FactorDAGProjector(flags=flags)
@@ -21,14 +26,17 @@ class FactorDAGService:
     def projection(self):
         return self.projector.project(self.store.query_events())
 
-    def bootstrap_registry(self, registry: RegistryBootstrapSource, *, run_id: str):
-        payload = build_registry_bootstrap_payload(registry)
+    def bootstrap_registry(
+        self, registry: RegistryBootstrapSource, *, run_id: str,
+        grammar: GrammarDefinition = DEFAULT_GRAMMAR,
+    ):
+        payload = build_registry_bootstrap_payload(registry, grammar=grammar)
         return self.store.append_event(
             EventDraft(
-                event_type="RegistryBootstrapRecorded",
+                event_type="RegistryBootstrapRecordedV2",
                 entity_id=str(payload["snapshot_id"]),
                 run_id=run_id,
-                payload_schema_version="registry_bootstrap_recorded.v1",
+                payload_schema_version="registry_bootstrap_recorded.v2",
                 payload=payload,
                 idempotency_key="registry-bootstrap:" + str(payload["registry_snapshot_hash"]),
             )

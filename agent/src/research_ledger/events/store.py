@@ -215,6 +215,7 @@ class ResearchEventStore:
         self._validate_artifacts(payload)
         self._validate_external_process_evidence(draft.event_type, payload)
         self._validate_factor_definition_identity(draft.event_type, payload)
+        self._validate_registry_bootstrap_identity(draft.event_type, payload)
         payload_hash = canonical_json_hash(payload)
         last_error: Exception | None = None
 
@@ -264,6 +265,9 @@ class ResearchEventStore:
 
     def _validate_event_capability(self, event_type: str) -> None:
         requirements = {
+            "RegistryBootstrapRecordedV2": (
+                "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
+            ),
             "ProcessActionFrozenV2": (
                 "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
                 "VIBE_TRADING_PROCESS_MEMORY",
@@ -426,6 +430,7 @@ class ResearchEventStore:
             "TrialStarted": "trial_id",
             "FactorDefinitionRecorded": "factor_spec_id",
             "RegistryBootstrapRecorded": "snapshot_id",
+            "RegistryBootstrapRecordedV2": "snapshot_id",
             "DerivationRecorded": "child_factor_spec_id",
             "ProcessActionFrozen": "action_id",
             "ProcessOutcomeRecorded": "outcome_id",
@@ -524,6 +529,19 @@ class ResearchEventStore:
         except (TypeError, ValueError) as exc:
             raise EventValidationError("factor definition identity is not reproducible") from exc
 
+    @staticmethod
+    def _validate_registry_bootstrap_identity(
+        event_type: str, payload: Mapping[str, Any]
+    ) -> None:
+        if event_type != "RegistryBootstrapRecordedV2":
+            return
+        from src.alpha_foundry.dag.bootstrap import validate_registry_bootstrap_payload
+
+        try:
+            validate_registry_bootstrap_payload(payload)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise EventValidationError("registry bootstrap identity is not reproducible") from exc
+
     def _validate_transition(
         self,
         conn: sqlite3.Connection,
@@ -531,10 +549,32 @@ class ResearchEventStore:
         payload: Mapping[str, Any],
     ) -> None:
         event_type = draft.event_type
+        if event_type == "FactorDefinitionRecorded" and payload.get("metadata", {}).get(
+            "identity_schema_version"
+        ) == "factor_spec.v1":
+            prior = conn.execute(
+                "SELECT 1 FROM research_events WHERE event_type = ? AND entity_id = ?",
+                (event_type, payload["factor_spec_id"]),
+            ).fetchone()
+            if prior is not None:
+                raise EventTransitionError("production factor definition already exists")
+            return
+        if event_type in {"RegistryBootstrapRecorded", "RegistryBootstrapRecordedV2"}:
+            prior = conn.execute(
+                """
+                SELECT 1 FROM research_events
+                WHERE event_type IN ('RegistryBootstrapRecorded', 'RegistryBootstrapRecordedV2')
+                  AND entity_id = ?
+                """,
+                (payload["snapshot_id"],),
+            ).fetchone()
+            if prior is not None:
+                raise EventTransitionError("registry snapshot is already recorded")
+            return
         if event_type == "DerivationRecorded":
             terminal = conn.execute(
                 """
-                SELECT 1 FROM research_events
+                SELECT payload FROM research_events
                 WHERE event_type = 'TrialTerminated' AND event_hash = ?
                 """,
                 (payload["trial_terminal_event_hash"],),
@@ -562,6 +602,41 @@ class ResearchEventStore:
             }
             if known_definitions != definition_ids:
                 raise EventTransitionError("derivation references no prior factor definition")
+            definition_row = conn.execute(
+                """
+                SELECT payload FROM research_events
+                WHERE event_type = 'FactorDefinitionRecorded' AND entity_id = ?
+                ORDER BY seq ASC LIMIT 1
+                """,
+                (child,),
+            ).fetchone()
+            assert definition_row is not None
+            definition = json.loads(str(definition_row["payload"]))
+            terminal_payload = json.loads(str(terminal["payload"]))
+            originating_trial_id = str(
+                definition.get("metadata", {}).get("originating_trial_id", "")
+            )
+            if not originating_trial_id or terminal_payload["trial_id"] != originating_trial_id:
+                raise EventTransitionError("derivation terminal is not bound to the child trial")
+            if terminal_payload["status"] not in {"success", "reject"}:
+                raise EventTransitionError("derivation terminal is not an evaluated outcome")
+            evaluation_hash = terminal_payload["evaluation_event_hash"]
+            evaluation_row = conn.execute(
+                """
+                SELECT payload FROM research_events
+                WHERE event_type = 'EvaluationRecorded' AND event_hash = ?
+                """,
+                (evaluation_hash,),
+            ).fetchone()
+            if evaluation_row is None:
+                raise EventTransitionError("derivation lacks matching train/valid evaluation evidence")
+            evaluation = json.loads(str(evaluation_row["payload"]))
+            if (
+                evaluation["trial_id"] != originating_trial_id
+                or evaluation["factor_spec_id"] != child
+                or evaluation["data_scope"] not in {"valid", "train_valid"}
+            ):
+                raise EventTransitionError("derivation lacks matching train/valid evaluation evidence")
             prior_rows = conn.execute(
                 "SELECT payload FROM research_events WHERE event_type = 'DerivationRecorded' ORDER BY seq ASC"
             ).fetchall()
@@ -1335,6 +1410,8 @@ class ResearchEventStore:
                     ),
                     validated_payload,
                 )
+                self._validate_factor_definition_identity(event.event_type, validated_payload)
+                self._validate_registry_bootstrap_identity(event.event_type, validated_payload)
                 stored_flags = dict(event.feature_flags)
                 if set(stored_flags) != set(AGS_FLAG_DEFAULTS):
                     return False
@@ -1375,7 +1452,7 @@ class ResearchEventStore:
         evaluation_payloads: dict[str, Mapping[str, Any]] = {}
         terminal_hashes: set[str] = set()
         terminal_payloads: dict[str, Mapping[str, Any]] = {}
-        definitions: set[str] = set()
+        definitions: dict[str, Mapping[str, Any]] = {}
         contracts: dict[str, Mapping[str, Any]] = {}
         accessed_factors: set[str] = set()
         protocols: dict[str, Mapping[str, Any]] = {}
@@ -1390,7 +1467,7 @@ class ResearchEventStore:
         for event in events:
             payload = event.payload
             if event.event_type == "FactorDefinitionRecorded":
-                definitions.add(str(payload["factor_spec_id"]))
+                definitions[str(payload["factor_spec_id"])] = payload
             elif event.event_type == "TrialStarted":
                 trial_id = str(payload["trial_id"])
                 if trial_id in started or trial_id in terminated:
@@ -1414,7 +1491,21 @@ class ResearchEventStore:
                 terminal_hashes.add(event.event_hash)
                 terminal_payloads[event.event_hash] = payload
             elif event.event_type == "DerivationRecorded":
-                if payload["trial_terminal_event_hash"] not in terminal_hashes:
+                terminal = terminal_payloads.get(str(payload["trial_terminal_event_hash"]))
+                definition = definitions.get(str(payload["child_factor_spec_id"]))
+                if terminal is None or definition is None:
+                    return False
+                trial_id = str(definition.get("metadata", {}).get("originating_trial_id", ""))
+                evaluation = evaluation_payloads.get(str(terminal["evaluation_event_hash"]))
+                if (
+                    not trial_id
+                    or terminal["trial_id"] != trial_id
+                    or terminal["status"] not in {"success", "reject"}
+                    or evaluation is None
+                    or evaluation["trial_id"] != trial_id
+                    or evaluation["factor_spec_id"] != payload["child_factor_spec_id"]
+                    or evaluation["data_scope"] not in {"valid", "train_valid"}
+                ):
                     return False
             elif event.event_type == "FalsificationContractRegistered":
                 contracts[str(payload["contract_id"])] = payload

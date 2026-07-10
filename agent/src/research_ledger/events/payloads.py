@@ -210,6 +210,48 @@ def _registry_root_list(value: Any, path: str) -> None:
             raise EventValidationError(f"{path}[{index}] opaque root cannot claim expression_id")
 
 
+def _registry_root_v2_list(value: Any, path: str) -> None:
+    if not isinstance(value, (list, tuple)) or not value:
+        raise EventValidationError(f"{path} must be a non-empty list")
+    seen: set[str] = set()
+    expected = {
+        "alpha_id", "status", "expression_id", "canonical_formula",
+        "legacy_formula_hash", "source_hash", "source_status", "source_reason",
+    }
+    for index, item in enumerate(value):
+        item_path = f"{path}[{index}]"
+        if not isinstance(item, Mapping) or set(item) != expected:
+            raise EventValidationError(f"{item_path} has unknown or missing root fields")
+        alpha_id = item["alpha_id"]
+        _string(alpha_id, f"{item_path}.alpha_id")
+        if alpha_id in seen:
+            raise EventValidationError(f"{path} contains duplicate alpha_id")
+        seen.add(alpha_id)
+        _enum("canonical_dsl", "legacy_opaque")(item["status"], f"{item_path}.status")
+        _nullable_hash(item["expression_id"], f"{item_path}.expression_id")
+        _nullable_string(item["canonical_formula"], f"{item_path}.canonical_formula")
+        _hash(item["legacy_formula_hash"], f"{item_path}.legacy_formula_hash")
+        _nullable_hash(item["source_hash"], f"{item_path}.source_hash")
+        _enum("available", "unavailable")(item["source_status"], f"{item_path}.source_status")
+        _nullable_string(item["source_reason"], f"{item_path}.source_reason")
+        if item["status"] == "canonical_dsl" and (
+            item["expression_id"] is None or item["canonical_formula"] is None
+        ):
+            raise EventValidationError(f"{item_path} canonical root lacks identity evidence")
+        if item["status"] == "legacy_opaque" and (
+            item["expression_id"] is not None or item["canonical_formula"] is not None
+        ):
+            raise EventValidationError(f"{item_path} opaque root claims canonical identity")
+        if item["source_status"] == "available" and (
+            item["source_hash"] is None or item["source_reason"] is not None
+        ):
+            raise EventValidationError(f"{item_path} available source evidence is malformed")
+        if item["source_status"] == "unavailable" and (
+            item["source_hash"] is not None or item["source_reason"] is None
+        ):
+            raise EventValidationError(f"{item_path} unavailable source evidence is malformed")
+
+
 def _enum(*values: str) -> Validator:
     allowed = frozenset(values)
 
@@ -355,6 +397,18 @@ _PAYLOAD_SPECS: dict[str, PayloadSpec] = {
             "registry_code_hash": _hash,
             "grammar_hash": _hash,
             "roots": _registry_root_list,
+        },
+    ),
+    "RegistryBootstrapRecordedV2": PayloadSpec(
+        "registry_bootstrap_recorded.v2",
+        {
+            "snapshot_id": _string,
+            "registry_snapshot_hash": _hash,
+            "registry_code_hash": _hash,
+            "grammar_version": _string,
+            "grammar_hash": _hash,
+            "grammar_definition": _mapping,
+            "roots": _registry_root_v2_list,
         },
     ),
     "DerivationRecorded": PayloadSpec(
