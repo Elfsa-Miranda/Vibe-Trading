@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+import math
 import random
 import sqlite3
 import time
 from collections import Counter
 from datetime import datetime
 from pathlib import Path, PurePosixPath
-from typing import Any, Literal, Mapping
+from typing import Any, Literal, Mapping, cast
 from uuid import UUID, uuid4
 
 from src.alpha_quality.flags import AGS_FLAG_DEFAULTS, ResolvedAGSFlags
@@ -406,8 +407,11 @@ class ResearchEventStore:
             "TrialTerminated": "trial_id",
             "RetrieverDecisionRecorded": "decision_id",
             "FalsificationContractRegistered": "contract_id",
+            "SequentialProtocolRegistered": "protocol_id",
+            "SequentialLookRecorded": "look_id",
             "OutcomeDataAccessed": "access_id",
             "FalsificationResultRecorded": "result_id",
+            "MechanismEvidenceIndexRecorded": "mei_id",
             "QualityDecisionRecorded": "decision_id",
             "ForwardPlanRecorded": "plan_id",
             "ForwardObservationRecorded": "observation_id",
@@ -505,6 +509,12 @@ class ResearchEventStore:
             if payload["child_factor_spec_id"] is None and payload["ast_diff"] is not None:
                 raise EventValidationError("invalid process outcome cannot carry an AST diff")
             return
+        if event_type == "SequentialProtocolRegistered":
+            self._validate_sequential_protocol_transition(conn, payload)
+            return
+        if event_type == "SequentialLookRecorded":
+            self._validate_sequential_look_transition(conn, payload)
+            return
         if event_type == "FalsificationResultRecorded":
             contract = conn.execute(
                 """
@@ -516,6 +526,10 @@ class ResearchEventStore:
             ).fetchone()
             if contract is None or json.loads(contract["payload"])["contract_hash"] != payload["contract_hash"]:
                 raise EventTransitionError("falsification result has no matching prior contract")
+            self._require_terminal_sequential_look_if_applicable(conn, payload)
+            return
+        if event_type == "MechanismEvidenceIndexRecorded":
+            self._validate_mechanism_evidence_index_transition(conn, payload)
             return
         if event_type == "ForwardObservationRecorded":
             plan = conn.execute(
@@ -565,6 +579,265 @@ class ResearchEventStore:
             if evaluation is None or json.loads(evaluation["payload"])["trial_id"] != trial_id:
                 raise EventTransitionError("successful trial evaluation evidence is missing or mismatched")
 
+    @staticmethod
+    def _event_payloads(
+        conn: sqlite3.Connection,
+        event_type: str,
+    ) -> list[tuple[str, dict[str, Any]]]:
+        rows = conn.execute(
+            "SELECT event_hash, payload FROM research_events WHERE event_type = ? ORDER BY seq ASC",
+            (event_type,),
+        ).fetchall()
+        return [(str(row["event_hash"]), json.loads(str(row["payload"]))) for row in rows]
+
+    def _validate_sequential_protocol_transition(
+        self,
+        conn: sqlite3.Connection,
+        payload: Mapping[str, Any],
+    ) -> None:
+        contract_row = conn.execute(
+            """
+            SELECT payload FROM research_events
+            WHERE event_type = 'FalsificationContractRegistered' AND entity_id = ?
+            ORDER BY seq DESC LIMIT 1
+            """,
+            (payload["contract_id"],),
+        ).fetchone()
+        if contract_row is None:
+            raise EventTransitionError("sequential protocol has no prior falsification contract")
+        contract = json.loads(str(contract_row["payload"]))
+        if (
+            contract["contract_hash"] != payload["contract_hash"]
+            or contract["factor_spec_id"] != payload["factor_spec_id"]
+            or contract["policy_hash"] != payload["policy_hash"]
+        ):
+            raise EventTransitionError("sequential protocol does not match its frozen contract")
+        for _, access in self._event_payloads(conn, "OutcomeDataAccessed"):
+            if access["factor_spec_id"] == payload["factor_spec_id"]:
+                raise EventTransitionError("sequential protocol must precede outcome-data access")
+        for _, result in self._event_payloads(conn, "FalsificationResultRecorded"):
+            if result["contract_id"] == payload["contract_id"]:
+                raise EventTransitionError("sequential protocol must precede falsification results")
+        for _, existing in self._event_payloads(conn, "SequentialProtocolRegistered"):
+            if existing["protocol_id"] == payload["protocol_id"]:
+                raise EventTransitionError("sequential protocol ID is already registered")
+            if existing["contract_id"] == payload["contract_id"]:
+                raise EventTransitionError("falsification contract already has a sequential protocol")
+
+    def _validate_sequential_look_transition(
+        self,
+        conn: sqlite3.Connection,
+        payload: Mapping[str, Any],
+    ) -> None:
+        protocol_row = conn.execute(
+            """
+            SELECT payload FROM research_events
+            WHERE event_type = 'SequentialProtocolRegistered' AND entity_id = ?
+            ORDER BY seq DESC LIMIT 1
+            """,
+            (payload["protocol_id"],),
+        ).fetchone()
+        if protocol_row is None:
+            raise EventTransitionError("sequential look has no prior registered protocol")
+        protocol = json.loads(str(protocol_row["payload"]))
+        for field in (
+            "protocol_hash",
+            "factor_spec_id",
+            "support_log_boundary",
+            "contradiction_log_boundary",
+        ):
+            if payload[field] != protocol[field]:
+                raise EventTransitionError(f"sequential look does not match protocol {field}")
+        self._validate_sequential_mixture_evidence(protocol, payload)
+
+        prior = [
+            (event_hash, look)
+            for event_hash, look in self._event_payloads(conn, "SequentialLookRecorded")
+            if look["protocol_id"] == payload["protocol_id"]
+        ]
+        if any(look["look_id"] == payload["look_id"] for _, look in prior):
+            raise EventTransitionError("sequential look ID is already recorded")
+        maximum_looks = int(protocol["maximum_looks"])
+        look_index = int(payload["look_index"])
+        if look_index > maximum_looks:
+            raise EventTransitionError("sequential look exceeds frozen maximum_looks")
+
+        used_block_ids = {str(look["block_id"]) for _, look in prior}
+        used_block_hashes = {str(look["block_hash"]) for _, look in prior}
+        used_unit_hashes = {
+            str(unit_hash)
+            for _, look in prior
+            for unit_hash in look["unit_hashes"]
+        }
+        if payload["block_id"] in used_block_ids or payload["block_hash"] in used_block_hashes:
+            raise EventTransitionError("sequential look cannot reuse an observed block")
+        if used_unit_hashes.intersection(str(item) for item in payload["unit_hashes"]):
+            raise EventTransitionError("sequential look cannot reuse an observed unit")
+
+        if not prior:
+            if look_index != 1 or payload["previous_look_event_hash"] is not None:
+                raise EventTransitionError("first sequential look must start at index one")
+            if payload["information_time"] != payload["incremental_information"]:
+                raise EventTransitionError("first information time must equal incremental information")
+        else:
+            previous_hash, previous = prior[-1]
+            if previous["status"] != "continue":
+                raise EventTransitionError("sequential protocol is already stopped")
+            if look_index != int(previous["look_index"]) + 1:
+                raise EventTransitionError("sequential look index must be contiguous")
+            if payload["previous_look_event_hash"] != previous_hash:
+                raise EventTransitionError("sequential look previous hash does not match")
+            expected_information = int(previous["information_time"]) + int(
+                payload["incremental_information"]
+            )
+            if payload["information_time"] != expected_information:
+                raise EventTransitionError("sequential information time must advance cumulatively")
+
+        if payload["status"] == "continue" and look_index == maximum_looks:
+            raise EventTransitionError("final permitted look must stop at maximum_looks")
+        if payload["status"] == "max_looks_reached" and look_index != maximum_looks:
+            raise EventTransitionError("max-look stop is valid only at maximum_looks")
+
+    def _require_terminal_sequential_look_if_applicable(
+        self,
+        conn: sqlite3.Connection,
+        payload: Mapping[str, Any],
+    ) -> None:
+        protocols = [
+            protocol
+            for _, protocol in self._event_payloads(conn, "SequentialProtocolRegistered")
+            if protocol["contract_id"] == payload["contract_id"]
+        ]
+        if not protocols:
+            return
+        protocol = protocols[-1]
+        looks = [
+            look
+            for _, look in self._event_payloads(conn, "SequentialLookRecorded")
+            if look["protocol_id"] == protocol["protocol_id"]
+        ]
+        if not looks or looks[-1]["status"] == "continue":
+            raise EventTransitionError("sequential result requires a terminal sequential look")
+
+    def _validate_mechanism_evidence_index_transition(
+        self,
+        conn: sqlite3.Connection,
+        payload: Mapping[str, Any],
+    ) -> None:
+        source_hashes = tuple(str(item) for item in payload["source_event_hashes"])
+        referenced_result_hashes = {
+            str(item) for item in payload["source_result_hashes"]
+        }
+        available_result_hashes: set[str] = set()
+        source_outcomes: dict[str, str] = {}
+        for source_hash in source_hashes:
+            result_row = conn.execute(
+                """
+                SELECT payload FROM research_events
+                WHERE event_type = 'FalsificationResultRecorded' AND event_hash = ?
+                """,
+                (source_hash,),
+            ).fetchone()
+            if result_row is None:
+                raise EventTransitionError("MEI references no prior falsification result")
+            result = json.loads(str(result_row["payload"]))
+            source_outcomes[source_hash] = str(result["outcome"])
+            available_result_hashes.update(
+                str(reference["artifact_hash"])
+                for reference in result["artifact_refs"]
+            )
+            contract_row = conn.execute(
+                """
+                SELECT payload FROM research_events
+                WHERE event_type = 'FalsificationContractRegistered' AND entity_id = ?
+                ORDER BY seq DESC LIMIT 1
+                """,
+                (result["contract_id"],),
+            ).fetchone()
+            if contract_row is None:
+                raise EventTransitionError("MEI source result has no registered contract")
+            contract = json.loads(str(contract_row["payload"]))
+            if contract["factor_spec_id"] != payload["factor_spec_id"]:
+                raise EventTransitionError("MEI source results must belong to one factor")
+            if contract["policy_hash"] != payload["policy_hash"]:
+                raise EventTransitionError("MEI source results must use one frozen policy")
+        if not referenced_result_hashes.issubset(available_result_hashes):
+            raise EventTransitionError("MEI source result hashes lack prior artifact evidence")
+        decisive = {str(item) for item in payload["decisive_event_hashes"]}
+        expected_state = self._mechanism_ordinal_state(source_outcomes, decisive)
+        if payload["ordinal_state"] != expected_state:
+            raise EventTransitionError("MEI ordinal state does not match deterministic truth table")
+        content = self._mechanism_index_content(payload)
+        if canonical_json_hash(content) != payload["mei_hash"]:
+            raise EventTransitionError("MEI hash does not match deterministic ordinal content")
+
+    @staticmethod
+    def _validate_sequential_mixture_evidence(
+        protocol: Mapping[str, Any], payload: Mapping[str, Any]
+    ) -> None:
+        weights = tuple(float(value) for value in protocol["mixture_weights"])
+        support = tuple(float(value) for value in payload["support_component_log_capitals"])
+        contradiction = tuple(
+            float(value) for value in payload["contradiction_component_log_capitals"]
+        )
+        if len(support) != len(weights) or len(contradiction) != len(weights):
+            raise EventTransitionError("sequential component state does not match frozen mixture")
+
+        def mixture_log(components: tuple[float, ...]) -> float:
+            terms = tuple(math.log(weight) + value for weight, value in zip(weights, components, strict=True))
+            maximum = max(terms)
+            return maximum + math.log(math.fsum(math.exp(value - maximum) for value in terms))
+
+        expected_support = mixture_log(support)
+        expected_contradiction = mixture_log(contradiction)
+        if not math.isclose(
+            float(payload["cumulative_support_log_e"]),
+            expected_support,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        ) or not math.isclose(
+            float(payload["cumulative_contradiction_log_e"]),
+            expected_contradiction,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        ):
+            raise EventTransitionError("sequential cumulative log-e does not match component state")
+
+    @staticmethod
+    def _mechanism_ordinal_state(
+        source_outcomes: Mapping[str, str], decisive_event_hashes: set[str]
+    ) -> str:
+        decisive_outcomes = [
+            outcome
+            for event_hash, outcome in source_outcomes.items()
+            if event_hash in decisive_event_hashes
+        ]
+        if any(outcome == "falsified" for outcome in decisive_outcomes):
+            return "falsified"
+        if not decisive_outcomes or any(outcome != "supported" for outcome in decisive_outcomes):
+            return "inconclusive"
+        if all(outcome == "supported" for outcome in source_outcomes.values()):
+            return "supported"
+        return "partial_support"
+
+    @staticmethod
+    def _mechanism_index_content(payload: Mapping[str, Any]) -> dict[str, Any]:
+        return {
+            "schema_version": payload["mei_schema_version"],
+            "truth_table_version": payload["truth_table_version"],
+            "factor_spec_id": payload["factor_spec_id"],
+            "ordinal_state": payload["ordinal_state"],
+            "policy_version": payload["policy_version"],
+            "policy_hash": payload["policy_hash"],
+            "source_result_hashes": list(payload["source_result_hashes"]),
+            "source_event_hashes": list(payload["source_event_hashes"]),
+            "decisive_event_hashes": list(payload["decisive_event_hashes"]),
+            "advisory_event_hashes": list(payload["advisory_event_hashes"]),
+            "reason_codes": list(payload["reason_codes"]),
+            "warning_codes": list(payload["warning_codes"]),
+            "limitation_codes": list(payload["limitation_codes"]),
+        }
+
     def _tail_hash(self, conn: sqlite3.Connection) -> str | None:
         row = conn.execute(
             "SELECT event_hash FROM research_events ORDER BY seq DESC LIMIT 1"
@@ -613,7 +886,7 @@ class ResearchEventStore:
     @staticmethod
     def _row_to_event(row: sqlite3.Row) -> ResearchEventEnvelope:
         return ResearchEventEnvelope(
-            schema_version=str(row["schema_version"]),
+            schema_version=cast(Literal["research_event.v1"], str(row["schema_version"])),
             event_id=str(row["event_id"]),
             event_type=str(row["event_type"]),
             entity_id=str(row["entity_id"]),
@@ -723,7 +996,16 @@ class ResearchEventStore:
         terminated: set[str] = set()
         evaluations: dict[str, str] = {}
         terminal_hashes: set[str] = set()
-        contracts: dict[str, str] = {}
+        contracts: dict[str, Mapping[str, Any]] = {}
+        accessed_factors: set[str] = set()
+        protocols: dict[str, Mapping[str, Any]] = {}
+        protocol_by_contract: dict[str, str] = {}
+        looks_by_protocol: dict[str, list[tuple[str, Mapping[str, Any]]]] = {}
+        result_factors: dict[str, str] = {}
+        result_policies: dict[str, str] = {}
+        result_outcomes: dict[str, str] = {}
+        result_artifact_hashes: dict[str, set[str]] = {}
+        result_contracts: set[str] = set()
         plans: set[str] = set()
         for event in events:
             payload = event.payload
@@ -751,9 +1033,143 @@ class ResearchEventStore:
                 if payload["trial_terminal_event_hash"] not in terminal_hashes:
                     return False
             elif event.event_type == "FalsificationContractRegistered":
-                contracts[str(payload["contract_id"])] = str(payload["contract_hash"])
+                contracts[str(payload["contract_id"])] = payload
+            elif event.event_type == "OutcomeDataAccessed":
+                accessed_factors.add(str(payload["factor_spec_id"]))
+            elif event.event_type == "SequentialProtocolRegistered":
+                contract_id = str(payload["contract_id"])
+                protocol_id = str(payload["protocol_id"])
+                contract = contracts.get(contract_id)
+                if contract is None:
+                    return False
+                if (
+                    contract["contract_hash"] != payload["contract_hash"]
+                    or contract["factor_spec_id"] != payload["factor_spec_id"]
+                    or contract["policy_hash"] != payload["policy_hash"]
+                    or payload["factor_spec_id"] in accessed_factors
+                    or contract_id in result_contracts
+                    or contract_id in protocol_by_contract
+                    or protocol_id in protocols
+                ):
+                    return False
+                protocols[protocol_id] = payload
+                protocol_by_contract[contract_id] = protocol_id
+                looks_by_protocol[protocol_id] = []
+            elif event.event_type == "SequentialLookRecorded":
+                protocol_id = str(payload["protocol_id"])
+                protocol = protocols.get(protocol_id)
+                if protocol is None:
+                    return False
+                if any(
+                    payload[field] != protocol[field]
+                    for field in (
+                        "protocol_hash",
+                        "factor_spec_id",
+                        "support_log_boundary",
+                        "contradiction_log_boundary",
+                    )
+                ):
+                    return False
+                try:
+                    ResearchEventStore._validate_sequential_mixture_evidence(
+                        protocol, payload
+                    )
+                except EventTransitionError:
+                    return False
+                prior = looks_by_protocol[protocol_id]
+                if any(look["look_id"] == payload["look_id"] for _, look in prior):
+                    return False
+                maximum_looks = int(protocol["maximum_looks"])
+                look_index = int(payload["look_index"])
+                if look_index > maximum_looks:
+                    return False
+                if any(
+                    look["block_id"] == payload["block_id"]
+                    or look["block_hash"] == payload["block_hash"]
+                    for _, look in prior
+                ):
+                    return False
+                used_units = {
+                    str(unit_hash)
+                    for _, look in prior
+                    for unit_hash in look["unit_hashes"]
+                }
+                if used_units.intersection(str(item) for item in payload["unit_hashes"]):
+                    return False
+                if not prior:
+                    if (
+                        look_index != 1
+                        or payload["previous_look_event_hash"] is not None
+                        or payload["information_time"] != payload["incremental_information"]
+                    ):
+                        return False
+                else:
+                    previous_hash, previous = prior[-1]
+                    if (
+                        previous["status"] != "continue"
+                        or look_index != int(previous["look_index"]) + 1
+                        or payload["previous_look_event_hash"] != previous_hash
+                        or payload["information_time"]
+                        != int(previous["information_time"])
+                        + int(payload["incremental_information"])
+                    ):
+                        return False
+                if payload["status"] == "continue" and look_index == maximum_looks:
+                    return False
+                if payload["status"] == "max_looks_reached" and look_index != maximum_looks:
+                    return False
+                prior.append((event.event_hash, payload))
             elif event.event_type == "FalsificationResultRecorded":
-                if contracts.get(str(payload["contract_id"])) != payload["contract_hash"]:
+                contract_id = str(payload["contract_id"])
+                contract = contracts.get(contract_id)
+                if contract is None or contract["contract_hash"] != payload["contract_hash"]:
+                    return False
+                sequential_protocol_id = protocol_by_contract.get(contract_id)
+                if sequential_protocol_id is not None:
+                    looks = looks_by_protocol[sequential_protocol_id]
+                    if not looks or looks[-1][1]["status"] == "continue":
+                        return False
+                result_factors[event.event_hash] = str(contract["factor_spec_id"])
+                result_policies[event.event_hash] = str(contract["policy_hash"])
+                result_outcomes[event.event_hash] = str(payload["outcome"])
+                result_contracts.add(contract_id)
+                result_artifact_hashes[event.event_hash] = {
+                    str(reference["artifact_hash"])
+                    for reference in payload["artifact_refs"]
+                }
+            elif event.event_type == "MechanismEvidenceIndexRecorded":
+                factor_spec_id = str(payload["factor_spec_id"])
+                source_events = tuple(str(item) for item in payload["source_event_hashes"])
+                if any(result_factors.get(source) != factor_spec_id for source in source_events):
+                    return False
+                if any(
+                    result_policies.get(source) != payload["policy_hash"]
+                    for source in source_events
+                ):
+                    return False
+                available_hashes = {
+                    artifact_hash
+                    for source in source_events
+                    for artifact_hash in result_artifact_hashes.get(source, set())
+                }
+                if not set(str(item) for item in payload["source_result_hashes"]).issubset(
+                    available_hashes
+                ):
+                    return False
+                source_outcomes = {
+                    source: result_outcomes[source]
+                    for source in source_events
+                    if source in result_outcomes
+                }
+                decisive = {str(item) for item in payload["decisive_event_hashes"]}
+                if (
+                    ResearchEventStore._mechanism_ordinal_state(source_outcomes, decisive)
+                    != payload["ordinal_state"]
+                    or canonical_json_hash(
+                        ResearchEventStore._mechanism_index_content(payload)
+                    )
+                    != payload["mei_hash"]
+                ):
                     return False
             elif event.event_type == "ForwardPlanRecorded":
                 plans.add(str(payload["plan_id"]))

@@ -72,6 +72,12 @@ def _nonnegative_integer(value: Any, path: str) -> None:
         raise EventValidationError(f"{path} must be non-negative")
 
 
+def _positive_integer(value: Any, path: str) -> None:
+    _integer(value, path)
+    if value <= 0:
+        raise EventValidationError(f"{path} must be positive")
+
+
 def _probability(value: Any, path: str) -> None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise EventValidationError(f"{path} must be numeric")
@@ -84,6 +90,12 @@ def _finite_number(value: Any, path: str) -> None:
         raise EventValidationError(f"{path} must be numeric")
     if not math.isfinite(float(value)):
         raise EventValidationError(f"{path} must be finite")
+
+
+def _positive_finite_number(value: Any, path: str) -> None:
+    _finite_number(value, path)
+    if float(value) <= 0.0:
+        raise EventValidationError(f"{path} must be positive")
 
 
 def _boolean(value: Any, path: str) -> None:
@@ -117,6 +129,36 @@ def _nonempty_string_list(value: Any, path: str) -> None:
     _string_list(value, path)
     if not value:
         raise EventValidationError(f"{path} must not be empty")
+
+
+def _finite_number_list(value: Any, path: str) -> None:
+    if not isinstance(value, (list, tuple)) or not value:
+        raise EventValidationError(f"{path} must be a non-empty list")
+    for index, item in enumerate(value):
+        _finite_number(item, f"{path}[{index}]")
+
+
+def _hash_list(value: Any, path: str, *, allow_empty: bool) -> None:
+    if not isinstance(value, (list, tuple)):
+        raise EventValidationError(f"{path} must be a list")
+    if not allow_empty and not value:
+        raise EventValidationError(f"{path} must not be empty")
+    normalized: list[str] = []
+    for index, item in enumerate(value):
+        _hash(item, f"{path}[{index}]")
+        normalized.append(str(item))
+    if len(normalized) != len(set(normalized)):
+        raise EventValidationError(f"{path} must contain unique hashes")
+    if normalized != sorted(normalized):
+        raise EventValidationError(f"{path} must be sorted")
+
+
+def _nonempty_hash_list(value: Any, path: str) -> None:
+    _hash_list(value, path, allow_empty=False)
+
+
+def _unique_hash_list(value: Any, path: str) -> None:
+    _hash_list(value, path, allow_empty=True)
 
 
 def _artifact_list(value: Any, path: str) -> None:
@@ -335,6 +377,65 @@ _PAYLOAD_SPECS: dict[str, PayloadSpec] = {
             "policy_hash": _hash,
         },
     ),
+    "SequentialProtocolRegistered": PayloadSpec(
+        "sequential_protocol_registered.v1",
+        {
+            "protocol_id": _string,
+            "protocol_hash": _hash,
+            "contract_id": _string,
+            "contract_hash": _hash,
+            "factor_spec_id": _string,
+            "method": _enum("bounded_mean_mixture_e.v1"),
+            "maximum_looks": _positive_integer,
+            "stopping_rule": _enum("e_process_boundary_or_max_looks.v1"),
+            "data_scope": _enum("valid"),
+            "family_alpha": _probability,
+            "support_alpha": _probability,
+            "contradiction_alpha": _probability,
+            "lambda_grid": _finite_number_list,
+            "mixture_weights": _finite_number_list,
+            "support_log_boundary": _positive_finite_number,
+            "contradiction_log_boundary": _positive_finite_number,
+            "filtration_hash": _hash,
+            "block_schedule_hash": _hash,
+            "policy_hash": _hash,
+            "registered_at": _timestamp,
+        },
+    ),
+    "SequentialLookRecorded": PayloadSpec(
+        "sequential_look_recorded.v1",
+        {
+            "look_id": _string,
+            "protocol_id": _string,
+            "protocol_hash": _hash,
+            "factor_spec_id": _string,
+            "look_index": _positive_integer,
+            "information_time": _positive_integer,
+            "block_id": _string,
+            "block_hash": _hash,
+            "unit_hashes": _nonempty_hash_list,
+            "incremental_information": _positive_integer,
+            "support_component_log_capitals": _finite_number_list,
+            "contradiction_component_log_capitals": _finite_number_list,
+            "cumulative_support_log_e": _finite_number,
+            "cumulative_contradiction_log_e": _finite_number,
+            "support_log_boundary": _positive_finite_number,
+            "contradiction_log_boundary": _positive_finite_number,
+            "status": _enum(
+                "continue",
+                "support_boundary_crossed",
+                "contradiction_boundary_crossed",
+                "max_looks_reached",
+            ),
+            "stop_reason": _enum(
+                "NONE",
+                "SUPPORT_BOUNDARY",
+                "CONTRADICTION_BOUNDARY",
+                "MAX_LOOKS",
+            ),
+            "previous_look_event_hash": _nullable_hash,
+        },
+    ),
     "OutcomeDataAccessed": PayloadSpec(
         "outcome_data_accessed.v1",
         {
@@ -352,6 +453,28 @@ _PAYLOAD_SPECS: dict[str, PayloadSpec] = {
             "contract_hash": _hash,
             "outcome": _enum("falsified", "inconclusive", "partial_support", "supported"),
             "artifact_refs": _artifact_list,
+        },
+    ),
+    "MechanismEvidenceIndexRecorded": PayloadSpec(
+        "mechanism_evidence_index_recorded.v1",
+        {
+            "mei_id": _string,
+            "factor_spec_id": _string,
+            "mei_hash": _hash,
+            "mei_schema_version": _enum("mechanism_evidence_index.v1"),
+            "truth_table_version": _enum("mechanism_evidence_truth_table.v1"),
+            "policy_version": _string,
+            "policy_hash": _hash,
+            "source_result_hashes": _nonempty_hash_list,
+            "source_event_hashes": _nonempty_hash_list,
+            "decisive_event_hashes": _unique_hash_list,
+            "advisory_event_hashes": _unique_hash_list,
+            "ordinal_state": _enum(
+                "falsified", "inconclusive", "partial_support", "supported"
+            ),
+            "reason_codes": _reason_codes,
+            "warning_codes": _reason_codes,
+            "limitation_codes": _reason_codes,
         },
     ),
     "QualityDecisionRecorded": PayloadSpec(
@@ -486,6 +609,103 @@ def _validate_cross_field_rules(event_type: str, payload: Mapping[str, Any]) -> 
             raise EventValidationError("success terminal outcome requires a research decision")
     if event_type == "ForwardPlanRecorded" and payload["minimum_observations"] <= 0:
         raise EventValidationError("minimum_observations must be positive")
+    if event_type == "SequentialProtocolRegistered":
+        if payload["maximum_looks"] < 2:
+            raise EventValidationError("sequential protocol requires at least two looks")
+        alphas = (
+            float(payload["family_alpha"]),
+            float(payload["support_alpha"]),
+            float(payload["contradiction_alpha"]),
+        )
+        if any(not 0.0 < value < 0.5 for value in alphas):
+            raise EventValidationError("sequential alpha allocations must be in (0, 0.5)")
+        if alphas[1] + alphas[2] > alphas[0] + 1e-15:
+            raise EventValidationError("sequential channel alpha exceeds family alpha")
+        if not math.isclose(
+            float(payload["support_log_boundary"]),
+            -math.log(alphas[1]),
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        ) or not math.isclose(
+            float(payload["contradiction_log_boundary"]),
+            -math.log(alphas[2]),
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        ):
+            raise EventValidationError("sequential log boundaries must match frozen alpha")
+        lambdas = tuple(float(value) for value in payload["lambda_grid"])
+        weights = tuple(float(value) for value in payload["mixture_weights"])
+        if len(lambdas) != len(weights):
+            raise EventValidationError("sequential lambda and mixture lists must align")
+        if any(not 0.0 < value < 1.0 for value in lambdas) or len(set(lambdas)) != len(lambdas):
+            raise EventValidationError("sequential lambda grid must be unique and in (0, 1)")
+        if any(value <= 0.0 for value in weights) or not math.isclose(
+            math.fsum(weights), 1.0, rel_tol=0.0, abs_tol=1e-12
+        ):
+            raise EventValidationError("sequential mixture weights must be positive and sum to one")
+    if event_type == "SequentialLookRecorded":
+        support_components = payload["support_component_log_capitals"]
+        contradiction_components = payload["contradiction_component_log_capitals"]
+        if len(support_components) != len(contradiction_components):
+            raise EventValidationError("sequential component capital lists must have equal length")
+        if len(payload["unit_hashes"]) != payload["incremental_information"]:
+            raise EventValidationError(
+                "incremental_information must equal the number of unique unit hashes"
+            )
+        status = payload["status"]
+        reason = payload["stop_reason"]
+        expected_reason = {
+            "continue": "NONE",
+            "support_boundary_crossed": "SUPPORT_BOUNDARY",
+            "contradiction_boundary_crossed": "CONTRADICTION_BOUNDARY",
+            "max_looks_reached": "MAX_LOOKS",
+        }[status]
+        if reason != expected_reason:
+            raise EventValidationError("sequential look status and stop reason do not match")
+        support_crossed = (
+            payload["cumulative_support_log_e"] >= payload["support_log_boundary"]
+        )
+        contradiction_crossed = (
+            payload["cumulative_contradiction_log_e"]
+            >= payload["contradiction_log_boundary"]
+        )
+        if support_crossed and contradiction_crossed:
+            raise EventValidationError("sequential look cannot cross both opposing boundaries")
+        if status == "support_boundary_crossed" and not support_crossed:
+            raise EventValidationError("support boundary status requires a crossed boundary")
+        if status == "contradiction_boundary_crossed" and not contradiction_crossed:
+            raise EventValidationError("contradiction boundary status requires a crossed boundary")
+        if status in {"continue", "max_looks_reached"} and (
+            support_crossed or contradiction_crossed
+        ):
+            raise EventValidationError("uncrossed sequential status cannot carry crossed evidence")
+    if event_type == "MechanismEvidenceIndexRecorded":
+        result_hashes = payload["source_result_hashes"]
+        sources = set(payload["source_event_hashes"])
+        decisive = set(payload["decisive_event_hashes"])
+        advisory = set(payload["advisory_event_hashes"])
+        if len(result_hashes) != len(sources):
+            raise EventValidationError("MEI result and event source counts must match")
+        if decisive & advisory:
+            raise EventValidationError("MEI decisive and advisory result references must be disjoint")
+        if decisive | advisory != sources:
+            raise EventValidationError("MEI roles must partition every source result reference")
+        required_reason_by_state = {
+            "falsified": {"DECISIVE_MECHANISM_CONTRADICTION"},
+            "supported": {"ALL_INCLUDED_EVIDENCE_SUPPORTED"},
+            "partial_support": {"DECISIVE_SUPPORT_WITH_ADVISORY_GAPS"},
+            "inconclusive": {
+                "NO_DECISIVE_EVIDENCE",
+                "DECISIVE_EVIDENCE_MISSING",
+                "DECISIVE_TEST_UNAVAILABLE",
+                "DECISIVE_TEST_LOW_POWER",
+                "DECISIVE_TEST_INCONCLUSIVE",
+            },
+        }
+        if not set(payload["reason_codes"]).intersection(
+            required_reason_by_state[payload["ordinal_state"]]
+        ):
+            raise EventValidationError("MEI state requires a versioned truth-table reason")
 
 
 def envelope_diagnostics(
@@ -508,6 +728,11 @@ def envelope_diagnostics(
             hard_failures |= codes
     if event_type == "FalsificationResultRecorded" and payload["outcome"] == "inconclusive":
         warnings.add("FALSIFICATION_INCONCLUSIVE")
+    if event_type == "MechanismEvidenceIndexRecorded":
+        if payload["ordinal_state"] == "inconclusive":
+            warnings.add("MECHANISM_EVIDENCE_INCONCLUSIVE")
+        elif payload["ordinal_state"] == "falsified":
+            hard_failures.add("MECHANISM_FALSIFIED")
     if event_type == "QualityDecisionRecorded":
         warnings |= {str(code) for code in payload["warnings"]}
         warnings |= {str(code) for code in payload["caps"]}
