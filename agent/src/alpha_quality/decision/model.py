@@ -50,8 +50,6 @@ class AlphaQualityDecisionContext:
     pit_contract_present: bool = True
     survivorship_bias: bool = False
     duplicate_alpha: bool = False
-    caller_claimed_decision: QualityDecision | None = None
-    total_quality_score: float = 0.0
     allow_missing_execution_return: bool = False
 
 

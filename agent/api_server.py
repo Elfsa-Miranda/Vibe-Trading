@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Mapping
 
 from fastapi import FastAPI, HTTPException, Request, status  # noqa: F401
 from fastapi.responses import FileResponse  # noqa: F401
@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from rich.console import Console
 
 from cli._version import __version__ as APP_VERSION
+from src.alpha_quality.flags import ResolvedAGSFlags
 from src.ui_services import build_run_analysis, load_run_context  # noqa: F401
 
 # UTF-8 on Windows
@@ -114,27 +115,28 @@ logger = logging.getLogger(__name__)
 # FastAPI Application
 # ============================================================================
 
-app = FastAPI(
-    title="Vibe-Trading API",
-    description="Vibe-Trading API: natural-language finance research, backtesting, and swarm workflows",
-    version=APP_VERSION,
-    docs_url="/docs",
-    redoc_url="/redoc"
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_CORS_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Middleware functions are defined in src.api.security / src.api.helpers, so
-# the @app.middleware("http") decorator cannot be used here — register them
-# programmatically instead.
-app.middleware("http")(_reject_untrusted_loopback_host)
-app.middleware("http")(_spa_html_deep_link_fallback)
+def _new_application(flags: ResolvedAGSFlags) -> FastAPI:
+    application = FastAPI(
+        title="Vibe-Trading API",
+        description=(
+            "Vibe-Trading API: natural-language finance research, backtesting, "
+            "and swarm workflows"
+        ),
+        version=APP_VERSION,
+        docs_url="/docs",
+        redoc_url="/redoc",
+    )
+    application.state.ags_flags = flags
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=_CORS_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    application.middleware("http")(_reject_untrusted_loopback_host)
+    application.middleware("http")(_spa_html_deep_link_fallback)
+    return application
 
 # ============================================================================
 # Lifecycle hooks
@@ -150,7 +152,6 @@ from src.api.scheduled_routes import (  # noqa: E402
 )
 
 
-@app.on_event("startup")
 async def _run_startup_preflight() -> None:
     """Run preflight checks on server startup."""
     from src.preflight import run_preflight
@@ -161,7 +162,6 @@ async def _run_startup_preflight() -> None:
         await _start_channel_runtime()
 
 
-@app.on_event("shutdown")
 async def _stop_scheduled_research_on_shutdown() -> None:
     """Stop the scheduled research executor on server shutdown."""
     await _stop_channel_runtime()
@@ -174,7 +174,6 @@ async def _stop_scheduled_research_on_shutdown() -> None:
 
 # --- Runs ---
 from src.api.runs_routes import register_runs_routes  # noqa: E402
-register_runs_routes(app)
 
 from src.api.runs_routes import (  # noqa: F401, E402
     _load_json_file,
@@ -184,7 +183,6 @@ from src.api.runs_routes import (  # noqa: F401, E402
 
 # --- Sessions ---
 from src.api.sessions_routes import register_sessions_routes  # noqa: E402
-register_sessions_routes(app)
 
 from src.api.sessions_routes import (  # noqa: F401, E402
     _goal_store,
@@ -194,13 +192,11 @@ from src.api.sessions_routes import (  # noqa: F401, E402
 
 # --- System ---
 from src.api.system_routes import register_system_routes  # noqa: E402
-register_system_routes(app)
 
 from src.api.system_routes import _terminate_current_process  # noqa: F401, E402
 
 # --- Settings ---
 from src.api.settings_routes import register_settings_routes  # noqa: E402
-register_settings_routes(app)
 
 from src.api.settings_routes import (  # noqa: F401, E402
     _baostock_supported,
@@ -210,7 +206,6 @@ from src.api.settings_routes import (  # noqa: F401, E402
 
 # --- Uploads ---
 from src.api.uploads_routes import register_uploads_routes  # noqa: E402
-register_uploads_routes(app)
 
 from src.api.uploads_routes import (  # noqa: F401, E402
     MAX_UPLOAD_SIZE,
@@ -222,9 +217,7 @@ from src.api.uploads_routes import (  # noqa: F401, E402
 
 # --- Channels ---
 from src.api.channels_routes import register_channels_routes  # noqa: E402
-register_channels_routes(app)
 from src.api.qveris_routes import qveris_router  # noqa: E402  # QVERIS-INTEGRATION
-app.include_router(qveris_router)  # QVERIS-INTEGRATION
 
 from src.api.channels_routes import (  # noqa: F401, E402
     ChannelPairingCommandRequest,
@@ -232,13 +225,11 @@ from src.api.channels_routes import (  # noqa: F401, E402
 
 # --- Swarm ---
 from src.api.swarm_routes import register_swarm_routes  # noqa: E402
-register_swarm_routes(app)
 
 from src.api.swarm_routes import _get_swarm_runtime  # noqa: F401, E402
 
 # --- Live trading ---
 from src.api.live_routes import register_live_routes  # noqa: E402
-register_live_routes(app)
 
 from src.api.live_routes import (  # noqa: F401, E402
     CommitMandateRequest,
@@ -267,11 +258,6 @@ from src.api.live_routes import (  # noqa: F401, E402
 
 # --- Alpha Zoo ---
 from src.api.alpha_routes import register_alpha_routes  # noqa: E402
-register_alpha_routes(app)
-
-# --- Alpha Genesis Reports (read-only) ---
-from src.api.alpha_genesis_routes import register_alpha_genesis_routes  # noqa: E402
-register_alpha_genesis_routes(app)
 
 
 # ============================================================================
@@ -283,7 +269,6 @@ register_alpha_genesis_routes(app)
 # guarded separately by VIBE_TRADING_ENABLE_SCHEDULER.
 
 from src.api.scheduled_routes import register_scheduled_routes  # noqa: E402
-register_scheduled_routes(app)
 
 from src.api.scheduled_routes import (  # noqa: E402, F401
     CreateScheduledRunRequest,
@@ -293,6 +278,41 @@ from src.api.scheduled_routes import (  # noqa: E402, F401
     _get_scheduled_research_store,
     _scheduled_research_scheduler_enabled,
 )
+
+
+def create_app(
+    settings: Mapping[str, Any] | object | None = None,
+) -> FastAPI:
+    """Build the complete API with a single frozen AGS flag snapshot."""
+
+    flags = ResolvedAGSFlags.from_settings(settings)
+    application = _new_application(flags)
+    application.on_event("startup")(_run_startup_preflight)
+    application.on_event("shutdown")(_stop_scheduled_research_on_shutdown)
+
+    register_runs_routes(application)
+    register_sessions_routes(application)
+    register_system_routes(application)
+    register_settings_routes(application)
+    register_uploads_routes(application)
+    register_channels_routes(application)
+    application.include_router(qveris_router)
+    register_swarm_routes(application)
+    register_live_routes(application)
+    register_alpha_routes(application)
+    register_scheduled_routes(application)
+
+    if flags.enabled("VIBE_TRADING_ALPHA_REPORT_API"):
+        # The optional module and its routes stay outside the disabled import
+        # and OpenAPI surface. Registration still occurs before OpenAPI build.
+        from src.api.alpha_genesis_routes import register_alpha_genesis_routes
+
+        register_alpha_genesis_routes(application, require_auth=require_auth)
+
+    return application
+
+
+app = create_app()
 
 
 # ============================================================================

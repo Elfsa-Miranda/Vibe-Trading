@@ -12,7 +12,15 @@ from fastapi.testclient import TestClient
 from src.alpha_foundry.reports.builder import build_alpha_genesis_report
 from src.alpha_quality.decision.model import AlphaQualityDecisionContext, QualityDecision
 from src.alpha_quality.decision.runner import QualityDecisionRunner
-from src.alpha_quality.model import AlphaQualityScorecard, ExecutionMetrics
+from src.alpha_quality.flags import ResolvedAGSFlags
+from src.alpha_quality.model import (
+    AlphaQualityScorecard,
+    CoverageMetrics,
+    ExecutionMetrics,
+    HorizonSplitMetrics,
+    ICMetricSummary,
+    PredictiveMetrics,
+)
 from src.api.alpha_genesis_routes import register_alpha_genesis_routes
 from src.research_ledger.data_snapshot import build_data_snapshot
 from src.research_ledger.trial_ledger import TrialLedger, TrialLedgerEntry
@@ -23,12 +31,27 @@ async def _noop_auth() -> None:
 
 
 def _scorecard() -> AlphaQualityScorecard:
+    valid = ICMetricSummary(
+        horizon=1,
+        rank_ic_mean=0.02,
+        rank_ic_std=0.04,
+        rank_icir=0.5,
+        t_stat=1.5,
+        t_stat_method="standard",
+        n_obs=80,
+    )
     return AlphaQualityScorecard(
         factor_id="candidate-full-flow",
         formula="rank(delta(close, 1))",
         factor_definition_hash="sha256:factor",
         scope="final_quality_decision",
         horizons=[1, 5],
+        predictive=PredictiveMetrics(
+            by_horizon={
+                1: HorizonSplitMetrics(horizon=1, by_split={"valid": valid})
+            }
+        ),
+        coverage=CoverageMetrics(by_date={}, mean_coverage=0.25),
         execution=ExecutionMetrics(
             uses_execution_return=True,
             return_mean=0.012,
@@ -98,13 +121,18 @@ def test_alpha_genesis_full_flow_uses_production_builders_and_redacts(tmp_path: 
     assert ledger.verify_hash_chain()
 
     scorecard = _scorecard()
-    decision = QualityDecisionRunner().run(
+    flags = ResolvedAGSFlags.from_settings(
+        {
+            "VIBE_TRADING_AGS_ENABLED": "1",
+            "VIBE_TRADING_ADMISSION_GATE": "1",
+        }
+    )
+    decision = QualityDecisionRunner(flags=flags).run(
         scorecard,
         AlphaQualityDecisionContext(
             trial_entries=ledger.query(),
             pit_contract_present=snapshot.pit_contract_present,
             survivorship_bias=snapshot.survivorship_bias,
-            total_quality_score=0.55,
         ),
     )
     assert decision.decision == QualityDecision.CANDIDATE_ZOO

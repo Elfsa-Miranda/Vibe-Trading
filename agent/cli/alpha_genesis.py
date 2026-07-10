@@ -4,10 +4,11 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from src.alpha_foundry.reports.model import AlphaGenesisReport
 from src.alpha_foundry.reports.render_markdown import render_markdown
+from src.alpha_quality.flags import ResolvedAGSFlags
 
 
 class AlphaGenesisCliError(RuntimeError):
@@ -34,7 +35,15 @@ def render_report_file(path: str | Path, *, markdown: bool = False) -> str:
     return report.to_json()
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(
+    argv: list[str] | None = None,
+    *,
+    settings: Mapping[str, Any] | object | None = None,
+) -> int:
+    flags = ResolvedAGSFlags.from_settings(settings)
+    if not flags.enabled("VIBE_TRADING_AGS_ENABLED"):
+        print("Alpha Genesis research CLI is disabled", file=sys.stderr)
+        return 2
     parser = argparse.ArgumentParser(description="Read Alpha Genesis research artifacts")
     parser.add_argument("report", help="Path to an Alpha Genesis report JSON file")
     parser.add_argument("--markdown", action="store_true", help="Render Markdown instead of JSON")

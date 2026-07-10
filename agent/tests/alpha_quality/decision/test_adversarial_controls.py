@@ -6,6 +6,7 @@ from src.alpha_quality.decision.model import (
     QualityDecision,
 )
 from src.alpha_quality.decision.runner import QualityDecisionRunner
+from src.alpha_quality.flags import ResolvedAGSFlags
 from src.alpha_quality.model import AlphaQualityScorecard, ExecutionMetrics
 
 
@@ -24,8 +25,19 @@ def _scorecard(**kwargs: object) -> AlphaQualityScorecard:
     return AlphaQualityScorecard(**defaults)
 
 
+def _runner() -> QualityDecisionRunner:
+    return QualityDecisionRunner(
+        flags=ResolvedAGSFlags.from_settings(
+            {
+                "VIBE_TRADING_AGS_ENABLED": "1",
+                "VIBE_TRADING_ADMISSION_GATE": "1",
+            }
+        )
+    )
+
+
 def test_quality_decision_rejects_future_factor() -> None:
-    result = QualityDecisionRunner().run(
+    result = _runner().run(
         _scorecard(formula="rank(future_return)"),
         AlphaQualityDecisionContext(),
     )
@@ -35,7 +47,7 @@ def test_quality_decision_rejects_future_factor() -> None:
 
 
 def test_quality_decision_rejects_test_contamination() -> None:
-    result = QualityDecisionRunner().run(
+    result = _runner().run(
         _scorecard(),
         AlphaQualityDecisionContext(
             trial_entries=[
@@ -53,7 +65,7 @@ def test_quality_decision_rejects_test_contamination() -> None:
 
 
 def test_quality_decision_caps_survivorship_bias() -> None:
-    result = QualityDecisionRunner().run(
+    result = _runner().run(
         _scorecard(),
         AlphaQualityDecisionContext(survivorship_bias=True),
     )
@@ -63,7 +75,7 @@ def test_quality_decision_caps_survivorship_bias() -> None:
 
 
 def test_quality_decision_rejects_high_turnover_cost_blowup() -> None:
-    result = QualityDecisionRunner().run(
+    result = _runner().run(
         _scorecard(
             execution=ExecutionMetrics(
                 uses_execution_return=True,
@@ -80,11 +92,10 @@ def test_quality_decision_rejects_high_turnover_cost_blowup() -> None:
 
 
 def test_scorecard_override_attempt_rejected() -> None:
-    result = QualityDecisionRunner().run(
+    result = _runner().run(
         _scorecard(hard_failures=["LOOKAHEAD_DETECTED"]),
-        AlphaQualityDecisionContext(caller_claimed_decision=QualityDecision.PAPER_CANDIDATE),
+        AlphaQualityDecisionContext(),
     )
 
     assert result.decision == QualityDecision.REJECT
-    assert HardFailureCode.SCORECARD_OVERRIDE_ATTEMPT in result.hard_failures
     assert HardFailureCode.LOOKAHEAD_DETECTED in result.hard_failures

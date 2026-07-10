@@ -16,7 +16,15 @@ from src.alpha_foundry.reports.builder import build_alpha_genesis_report
 from src.alpha_foundry.synergy import compute_marginal_portfolio_value
 from src.alpha_quality.decision.model import AlphaQualityDecisionContext
 from src.alpha_quality.decision.runner import QualityDecisionRunner
-from src.alpha_quality.model import AlphaQualityScorecard, ExecutionMetrics
+from src.alpha_quality.flags import ResolvedAGSFlags
+from src.alpha_quality.model import (
+    AlphaQualityScorecard,
+    CoverageMetrics,
+    ExecutionMetrics,
+    HorizonSplitMetrics,
+    ICMetricSummary,
+    PredictiveMetrics,
+)
 
 
 def run_quality_demo(
@@ -32,9 +40,14 @@ def run_quality_demo(
         selected_p_value=scenario.get("selected_p_value"),
         survivorship_bias=bool(scenario.get("survivorship_bias", False)),
         duplicate_alpha=bool(scenario.get("duplicate_alpha", False)),
-        total_quality_score=float(scenario.get("total_quality_score", 0.0)),
     )
-    decision = QualityDecisionRunner().run(scorecard, context)
+    flags = ResolvedAGSFlags.from_settings(
+        {
+            "VIBE_TRADING_AGS_ENABLED": "1",
+            "VIBE_TRADING_ADMISSION_GATE": "1",
+        }
+    )
+    decision = QualityDecisionRunner(flags=flags).run(scorecard, context)
     synergy_metrics = (
         _orthogonal_synergy_metrics() if scenario.get("orthogonal_synergy") else {}
     )
@@ -98,12 +111,32 @@ def run_forward_decay_demo(expected_path: Path, *, dry_run: bool = True) -> dict
 
 
 def _scorecard(demo_id: str, scenario: dict[str, Any]) -> AlphaQualityScorecard:
+    predictive = None
+    if "rank_ic_mean" in scenario:
+        summary = ICMetricSummary(
+            horizon=1,
+            rank_ic_mean=float(scenario["rank_ic_mean"]),
+            rank_ic_std=float(scenario.get("rank_ic_std", 0.04)),
+            rank_icir=float(scenario.get("rank_icir", 0.0)),
+            t_stat=float(scenario.get("t_stat", 0.0)),
+            t_stat_method="standard",
+            n_obs=int(scenario.get("n_obs", 80)),
+        )
+        predictive = PredictiveMetrics(
+            by_horizon={
+                1: HorizonSplitMetrics(horizon=1, by_split={"valid": summary})
+            }
+        )
     return AlphaQualityScorecard(
         factor_id=demo_id,
         formula=str(scenario["formula"]),
         factor_definition_hash=f"sha256:{demo_id}",
         scope="final_quality_decision",
         horizons=[1, 5],
+        predictive=predictive,
+        coverage=CoverageMetrics(
+            by_date={}, mean_coverage=float(scenario.get("mean_coverage", 0.0))
+        ),
         execution=ExecutionMetrics(
             uses_execution_return=True,
             return_mean=float(scenario.get("execution_return_mean", 0.0)),
