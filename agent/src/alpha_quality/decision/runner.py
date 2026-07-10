@@ -10,7 +10,6 @@ from src.alpha_quality.decision.advisory import (
 from src.alpha_quality.decision.decision import (
     cap_reasons,
     decide_quality,
-    is_decision_raise,
 )
 from src.alpha_quality.decision.hard_fails import (
     check_cost_vs_execution_alpha,
@@ -28,31 +27,35 @@ from src.alpha_quality.decision.model import (
     AlphaQualityDecisionContext,
     HardFailureCode,
 )
+from src.alpha_quality.decision.score import build_v1_compatibility_score
+from src.alpha_quality.flags import ResolvedAGSFlags
 from src.alpha_quality.model import AlphaQualityScorecard
 
 
 class QualityDecisionRunner:
+    """Feature-gated v1 compatibility runner.
+
+    Decision v2 replaces this adapter. Until then, callers may provide scoped
+    context facts but never a score, failure set, cap, warning, or decision.
+    """
+
+    def __init__(self, *, flags: ResolvedAGSFlags) -> None:
+        self._flags = flags
+
     def run(
         self,
         scorecard: AlphaQualityScorecard,
         context: AlphaQualityDecisionContext,
     ) -> AlphaQualityDecision:
+        if not self._flags.enabled("VIBE_TRADING_ADMISSION_GATE"):
+            raise RuntimeError("legacy admission gate is disabled")
         hard_failures = self._hard_failures(scorecard, context)
         warnings = self._warnings(scorecard, context)
+        total_quality_score = build_v1_compatibility_score(scorecard)
         decision = decide_quality(
             hard_failures,
-            total_quality_score=context.total_quality_score,
+            total_quality_score=total_quality_score,
         )
-
-        if context.caller_claimed_decision is not None and is_decision_raise(
-            context.caller_claimed_decision,
-            decision,
-        ):
-            hard_failures.add(HardFailureCode.SCORECARD_OVERRIDE_ATTEMPT)
-            decision = decide_quality(
-                hard_failures,
-                total_quality_score=context.total_quality_score,
-            )
 
         return AlphaQualityDecision(
             schema_version="alpha_quality_decision.v1",
@@ -61,7 +64,7 @@ class QualityDecisionRunner:
             hard_failures=sorted(hard_failures, key=lambda code: code.value),
             warnings=sorted(warnings, key=lambda code: code.value),
             cap_reasons=cap_reasons(hard_failures),
-            total_quality_score=float(context.total_quality_score),
+            total_quality_score=total_quality_score,
         )
 
     def _hard_failures(

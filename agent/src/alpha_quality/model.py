@@ -9,16 +9,10 @@ from typing import Any, Literal, cast
 import numpy as np
 import pandas as pd
 
+from src.alpha_quality.flags import AGS_FLAG_DEFAULTS
 
-FEATURE_FLAGS = {
-    "VIBE_TRADING_AGS_ENABLED": False,
-    "VIBE_TRADING_ALPHA_SCORECARD": False,
-    "VIBE_TRADING_TRIAL_LEDGER": False,
-    "VIBE_TRADING_ALPHA_FOUNDRY": False,
-    "VIBE_TRADING_ADMISSION_GATE": False,
-    "VIBE_TRADING_FORWARD_TRACKING": False,
-    "VIBE_TRADING_ALPHA_REPORT_API": False,
-}
+
+FEATURE_FLAGS = dict(AGS_FLAG_DEFAULTS)
 
 ScorecardScope = Literal["discovery", "final_quality_decision"]
 

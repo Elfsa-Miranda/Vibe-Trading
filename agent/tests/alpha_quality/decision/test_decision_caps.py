@@ -6,6 +6,7 @@ from src.alpha_quality.decision.model import (
     QualityDecision,
 )
 from src.alpha_quality.decision.runner import QualityDecisionRunner
+from src.alpha_quality.flags import ResolvedAGSFlags
 from src.alpha_quality.model import AlphaQualityScorecard, ExecutionMetrics
 
 
@@ -24,10 +25,21 @@ def _scorecard(**kwargs: object) -> AlphaQualityScorecard:
     return AlphaQualityScorecard(**defaults)
 
 
+def _runner() -> QualityDecisionRunner:
+    return QualityDecisionRunner(
+        flags=ResolvedAGSFlags.from_settings(
+            {
+                "VIBE_TRADING_AGS_ENABLED": "1",
+                "VIBE_TRADING_ADMISSION_GATE": "1",
+            }
+        )
+    )
+
+
 def test_non_reproducible_caps_at_research_only() -> None:
     scorecard = _scorecard(data_snapshot_ref=None, trial_ledger_ref=None)
 
-    result = QualityDecisionRunner().run(scorecard, AlphaQualityDecisionContext())
+    result = _runner().run(scorecard, AlphaQualityDecisionContext())
 
     assert result.decision == QualityDecision.RESEARCH_ONLY
     assert HardFailureCode.NON_REPRODUCIBLE in result.hard_failures
@@ -36,7 +48,7 @@ def test_non_reproducible_caps_at_research_only() -> None:
 def test_missing_execution_return_caps_at_research_only() -> None:
     scorecard = _scorecard(execution=ExecutionMetrics(uses_execution_return=False))
 
-    result = QualityDecisionRunner().run(scorecard, AlphaQualityDecisionContext())
+    result = _runner().run(scorecard, AlphaQualityDecisionContext())
 
     assert result.decision == QualityDecision.RESEARCH_ONLY
     assert HardFailureCode.EXECUTION_RETURN_MISSING in result.hard_failures
@@ -52,7 +64,7 @@ def test_negative_execution_alpha_rejects() -> None:
         )
     )
 
-    result = QualityDecisionRunner().run(scorecard, AlphaQualityDecisionContext())
+    result = _runner().run(scorecard, AlphaQualityDecisionContext())
 
     assert result.decision == QualityDecision.REJECT
     assert HardFailureCode.COST_EXCEEDS_ALPHA in result.hard_failures
