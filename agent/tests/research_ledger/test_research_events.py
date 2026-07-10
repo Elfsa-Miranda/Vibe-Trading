@@ -21,6 +21,7 @@ from src.research_ledger.events import (
     PAYLOAD_SPECS,
 )
 from src.research_ledger.events.payloads import validate_and_redact_payload
+from src.research_ledger.hash_utils import canonical_json_hash
 from src.research_ledger.trial_ledger import TrialLedger, TrialLedgerEntry
 
 
@@ -171,6 +172,7 @@ def test_closed_payload_registry_covers_every_required_event_type() -> None:
         "MechanismEvidenceIndexRecorded",
         "ComplementEvidenceRecorded",
         "QualityDecisionRecorded",
+        "QualityDecisionV2Recorded",
         "ForwardPlanRecorded",
         "ForwardObservationRecorded",
     }
@@ -384,6 +386,31 @@ def test_every_registered_payload_schema_validates_a_complete_production_shape()
             "caps": ["MISSING_EXECUTION"],
             "limitations": ["research evidence only"],
         },
+        "QualityDecisionV2Recorded": {
+            "decision_id": "quality-v2-1",
+            "factor_spec_id": "factor-1",
+            "decision_hash": digest,
+            "decision": "candidate_zoo",
+            "tier": 2,
+            "policy_version": "decision-v2-policy.1",
+            "policy_hash": digest,
+            "scorecard_hash": digest,
+            "execution_hash": digest,
+            "snapshot_hash": digest,
+            "ledger_watermark_hash": digest,
+            "mechanism_evidence_hash": digest,
+            "complement_evidence_hash": digest,
+            "final_test_artifact_hash": None,
+            "forward_plan_hash": None,
+            "evidence_hashes": [digest],
+            "reasons": ["TERMINAL_TRAIN_VALID_EVIDENCE_QUALIFIED"],
+            "warnings": [],
+            "caps": [],
+            "limitations": ["TRAIN_VALID_ONLY"],
+            "within_tier_score": 0.5,
+            "forward_success_claim": False,
+            "artifact_refs": [],
+        },
         "ForwardPlanRecorded": {
             "plan_id": "plan-1",
             "factor_spec_id": "factor-1",
@@ -401,6 +428,25 @@ def test_every_registered_payload_schema_validates_a_complete_production_shape()
             "artifact_refs": [],
         },
     }
+
+    decision_v2 = samples["QualityDecisionV2Recorded"]
+    decision_v2["decision_hash"] = canonical_json_hash(
+        {
+            "schema_version": "alpha_quality_decision.v2",
+            "factor_spec_id": decision_v2["factor_spec_id"],
+            "decision": decision_v2["decision"],
+            "tier": decision_v2["tier"],
+            "policy_version": decision_v2["policy_version"],
+            "policy_hash": decision_v2["policy_hash"],
+            "evidence_hashes": decision_v2["evidence_hashes"],
+            "reasons": decision_v2["reasons"],
+            "warnings": decision_v2["warnings"],
+            "caps": decision_v2["caps"],
+            "limitations": decision_v2["limitations"],
+            "within_tier_score": decision_v2["within_tier_score"],
+            "forward_success_claim": decision_v2["forward_success_claim"],
+        }
+    )
 
     for event_type, spec in PAYLOAD_SPECS.items():
         validated = validate_and_redact_payload(event_type, spec.version, samples[event_type])

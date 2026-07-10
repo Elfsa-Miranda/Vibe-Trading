@@ -10,7 +10,7 @@ from types import MappingProxyType
 from typing import Any, Callable, Mapping
 
 from src.research_ledger.events.model import EventValidationError
-from src.research_ledger.hash_utils import canonical_json, redact_secrets
+from src.research_ledger.hash_utils import canonical_json, canonical_json_hash, redact_secrets
 
 
 _HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -522,6 +522,40 @@ _PAYLOAD_SPECS: dict[str, PayloadSpec] = {
             "limitations": _string_list,
         },
     ),
+    "QualityDecisionV2Recorded": PayloadSpec(
+        "quality_decision_recorded.v2",
+        {
+            "decision_id": _string,
+            "factor_spec_id": _string,
+            "decision_hash": _hash,
+            "decision": _enum(
+                "reject",
+                "research_only",
+                "candidate_zoo",
+                "paper_candidate",
+                "forward_track",
+            ),
+            "tier": _nonnegative_integer,
+            "policy_version": _string,
+            "policy_hash": _hash,
+            "scorecard_hash": _hash,
+            "execution_hash": _nullable_hash,
+            "snapshot_hash": _nullable_hash,
+            "ledger_watermark_hash": _hash,
+            "mechanism_evidence_hash": _nullable_hash,
+            "complement_evidence_hash": _nullable_hash,
+            "final_test_artifact_hash": _nullable_hash,
+            "forward_plan_hash": _nullable_hash,
+            "evidence_hashes": _nonempty_hash_list,
+            "reasons": _reason_codes,
+            "warnings": _reason_codes,
+            "caps": _reason_codes,
+            "limitations": _string_list,
+            "within_tier_score": _finite_number,
+            "forward_success_claim": _boolean,
+            "artifact_refs": _artifact_list,
+        },
+    ),
     "ForwardPlanRecorded": PayloadSpec(
         "forward_plan_recorded.v1",
         {
@@ -743,6 +777,62 @@ def _validate_cross_field_rules(event_type: str, payload: Mapping[str, Any]) -> 
             raise EventValidationError("missing complement evidence must cap research_only")
         if not missing_status and payload["cap"] is not None:
             raise EventValidationError("complete complement evidence cannot carry a cap")
+    if event_type == "QualityDecisionV2Recorded":
+        decision = payload["decision"]
+        expected_tier = {
+            "reject": 0,
+            "research_only": 1,
+            "candidate_zoo": 2,
+            "paper_candidate": 3,
+            "forward_track": 4,
+        }[decision]
+        if payload["tier"] != expected_tier:
+            raise EventValidationError("Decision v2 tier does not match decision")
+        if decision == "reject" and not payload["reasons"]:
+            raise EventValidationError("Decision v2 reject requires exact reasons")
+        if decision == "research_only" and not payload["caps"]:
+            raise EventValidationError("Decision v2 research_only requires exact caps")
+        if decision in {"paper_candidate", "forward_track"} and (
+            payload["final_test_artifact_hash"] is None
+        ):
+            raise EventValidationError("paper tiers require a frozen final-test artifact")
+        if decision == "forward_track" and payload["forward_plan_hash"] is None:
+            raise EventValidationError("forward_track requires a frozen plan")
+        if payload["forward_success_claim"]:
+            raise EventValidationError("Decision v2 cannot claim forward success")
+        reference_hashes = {
+            payload[name]
+            for name in (
+                "scorecard_hash",
+                "execution_hash",
+                "snapshot_hash",
+                "ledger_watermark_hash",
+                "mechanism_evidence_hash",
+                "complement_evidence_hash",
+                "final_test_artifact_hash",
+                "forward_plan_hash",
+            )
+            if payload[name] is not None
+        }
+        if payload["evidence_hashes"] != sorted(reference_hashes):
+            raise EventValidationError("Decision v2 evidence hashes must match its closed refs")
+        decision_content = {
+            "schema_version": "alpha_quality_decision.v2",
+            "factor_spec_id": payload["factor_spec_id"],
+            "decision": decision,
+            "tier": payload["tier"],
+            "policy_version": payload["policy_version"],
+            "policy_hash": payload["policy_hash"],
+            "evidence_hashes": payload["evidence_hashes"],
+            "reasons": payload["reasons"],
+            "warnings": payload["warnings"],
+            "caps": payload["caps"],
+            "limitations": payload["limitations"],
+            "within_tier_score": payload["within_tier_score"],
+            "forward_success_claim": payload["forward_success_claim"],
+        }
+        if canonical_json_hash(decision_content) != payload["decision_hash"]:
+            raise EventValidationError("Decision v2 hash does not match deterministic content")
 
 
 def envelope_diagnostics(
@@ -778,6 +868,11 @@ def envelope_diagnostics(
         elif payload["status"] == "nonpositive_marginal_value":
             warnings.add("COMPLEMENT_NET_VALUE_NONPOSITIVE")
     if event_type == "QualityDecisionRecorded":
+        warnings |= {str(code) for code in payload["warnings"]}
+        warnings |= {str(code) for code in payload["caps"]}
+        if payload["decision"] == "reject":
+            hard_failures |= {str(code) for code in payload["reasons"]}
+    if event_type == "QualityDecisionV2Recorded":
         warnings |= {str(code) for code in payload["warnings"]}
         warnings |= {str(code) for code in payload["caps"]}
         if payload["decision"] == "reject":
