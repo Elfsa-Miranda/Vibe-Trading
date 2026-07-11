@@ -92,6 +92,7 @@ _EVENT_CAPABILITY_REQUIREMENTS: Mapping[str, tuple[str, ...]] = {
     "ComplementEvidenceRecorded": ("VIBE_TRADING_COMPLEMENT_V2",),
     "QualityDecisionRecorded": ("VIBE_TRADING_ADMISSION_GATE",),
     "QualityDecisionV2Recorded": ("VIBE_TRADING_DECISION_V2",),
+    "QualityDecisionV3Recorded": ("VIBE_TRADING_DECISION_V2",),
     "FinalCandidateFrozen": ("VIBE_TRADING_DECISION_V2",),
     "FinalTestCapabilityIssued": ("VIBE_TRADING_DECISION_V2",),
     "FinalTestAccessRecorded": ("VIBE_TRADING_DECISION_V2",),
@@ -273,6 +274,7 @@ class ResearchEventStore:
         self._validate_artifacts(payload)
         self._validate_external_process_evidence(draft.event_type, payload)
         self._validate_external_retriever_evidence(draft.event_type, payload)
+        self._validate_external_quality_decision_evidence(draft.event_type, payload)
         self._validate_factor_definition_identity(draft.event_type, payload)
         self._validate_registry_bootstrap_identity(draft.event_type, payload)
         payload_hash = canonical_json_hash(payload)
@@ -497,6 +499,7 @@ class ResearchEventStore:
             "ComplementEvidenceRecorded": "complement_id",
             "QualityDecisionRecorded": "decision_id",
             "QualityDecisionV2Recorded": "decision_id",
+            "QualityDecisionV3Recorded": "decision_id",
             "FinalCandidateFrozen": "freeze_id",
             "FinalTestCapabilityIssued": "capability_id",
             "FinalTestAccessRecorded": "access_id",
@@ -640,6 +643,56 @@ class ResearchEventStore:
             raise EventValidationError(
                 "retriever v3 event differs from its deterministically rebuilt decision"
             )
+
+    def _validate_external_quality_decision_evidence(
+        self,
+        event_type: str,
+        payload: Mapping[str, Any],
+    ) -> None:
+        """Rebuild a source-bound quality decision before locking or replaying."""
+        if event_type != "QualityDecisionV3Recorded":
+            return
+        references = [
+            reference for reference in payload["artifact_refs"]
+            if reference["media_type"]
+            == "application/vnd.vibe.quality-decision-input-v3+json"
+        ]
+        if len(references) != 1:
+            raise EventValidationError("Decision v3 requires one source input bundle")
+        reference = references[0]
+        try:
+            from src.alpha_quality.decision_v2.runner import QualityDecisionV2Runner
+            from src.alpha_quality.decision_v2.source_v3 import (
+                FrozenDecisionEvidenceRepository,
+                QualityDecisionInputArtifactStoreV3,
+                decision_v2_policy_from_mapping,
+                source_bound_quality_decision_content,
+            )
+
+            bundle = QualityDecisionInputArtifactStoreV3(self.artifact_root).read(
+                str(reference["relative_path"]),
+                expected_bundle_hash=str(payload["input_bundle_hash"]),
+            )
+            policy = decision_v2_policy_from_mapping(bundle.policy_config)
+            decision = QualityDecisionV2Runner(
+                flags=self.flags,
+                policy=policy,
+                repository=FrozenDecisionEvidenceRepository(bundle.evidence_records),
+            ).run(bundle.evidence_refs)
+            content = source_bound_quality_decision_content(
+                decision,
+                input_bundle_hash=bundle.bundle_hash,
+            )
+        except (KeyError, OSError, TypeError, ValueError, RuntimeError) as exc:
+            raise EventValidationError(
+                "Decision v3 source evidence cannot rebuild the decision"
+            ) from exc
+        expected = {
+            "decision_hash": canonical_json_hash(content),
+            **{key: value for key, value in content.items() if key != "schema_version"},
+        }
+        if any(payload[name] != value for name, value in expected.items()):
+            raise EventValidationError("Decision v3 differs from deterministic rebuild")
 
     @staticmethod
     def _validate_factor_definition_identity(
@@ -861,7 +914,7 @@ class ResearchEventStore:
         if event_type == "ComplementEvidenceRecorded":
             self._validate_complement_evidence_transition(conn, payload)
             return
-        if event_type == "QualityDecisionV2Recorded":
+        if event_type in {"QualityDecisionV2Recorded", "QualityDecisionV3Recorded"}:
             definition = conn.execute(
                 """
                 SELECT 1 FROM research_events
@@ -1882,6 +1935,10 @@ class ResearchEventStore:
                     event.event_type,
                     validated_payload,
                 )
+                self._validate_external_quality_decision_evidence(
+                    event.event_type,
+                    validated_payload,
+                )
                 if validated_payload != event_dict["payload"]:
                     return False
                 self._validate_draft_identity(
@@ -2232,7 +2289,7 @@ class ResearchEventStore:
                 ):
                     return False
                 activation_decision_plans.add(plan_hash)
-            elif event.event_type == "QualityDecisionV2Recorded":
+            elif event.event_type in {"QualityDecisionV2Recorded", "QualityDecisionV3Recorded"}:
                 if str(payload["factor_spec_id"]) not in definitions:
                     return False
             elif event.event_type == "FinalCandidateFrozen":
