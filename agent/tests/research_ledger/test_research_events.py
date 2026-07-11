@@ -32,6 +32,15 @@ def _flags(*, enabled: bool = True) -> ResolvedAGSFlags:
         settings = {
             "VIBE_TRADING_AGS_ENABLED": "1",
             "VIBE_TRADING_RESEARCH_EVENTS": "1",
+            "VIBE_TRADING_ALPHA_FOUNDRY": "1",
+            "VIBE_TRADING_ADMISSION_GATE": "1",
+            "VIBE_TRADING_FORWARD_TRACKING": "1",
+            "VIBE_TRADING_FACTOR_DAG": "1",
+            "VIBE_TRADING_PROCESS_MEMORY": "1",
+            "VIBE_TRADING_TOPOLOGY_RETRIEVER": "1",
+            "VIBE_TRADING_FALSIFICATION_CONTRACT": "1",
+            "VIBE_TRADING_COMPLEMENT_V2": "1",
+            "VIBE_TRADING_DECISION_V2": "1",
         }
     return ResolvedAGSFlags.from_settings(settings)
 

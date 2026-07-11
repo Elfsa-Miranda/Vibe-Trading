@@ -13,7 +13,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Mapping, cast
 from uuid import UUID, uuid4
 
-from src.alpha_quality.flags import AGS_FLAG_DEFAULTS, ResolvedAGSFlags
+from src.alpha_quality.flags import ResolvedAGSFlags, is_valid_ags_flag_snapshot
 from src.research_ledger.events.artifacts import (
     hash_artifact,
     validate_artifact_references,
@@ -43,6 +43,42 @@ from src.research_ledger.hash_utils import (
 
 
 DurabilityProfile = Literal["authoritative", "balanced"]
+
+
+_EVENT_CAPABILITY_REQUIREMENTS: Mapping[str, tuple[str, ...]] = {
+    "RegistryBootstrapRecordedV2": (
+        "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
+    ),
+    "ProcessActionFrozenV2": (
+        "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
+        "VIBE_TRADING_PROCESS_MEMORY",
+    ),
+    "ProcessOutcomeRecordedV2": (
+        "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
+        "VIBE_TRADING_PROCESS_MEMORY",
+    ),
+    "RetrieverDecisionV2Recorded": (
+        "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
+        "VIBE_TRADING_PROCESS_MEMORY", "VIBE_TRADING_TOPOLOGY_RETRIEVER",
+    ),
+    "FalsificationContractRegistered": ("VIBE_TRADING_FALSIFICATION_CONTRACT",),
+    "SequentialProtocolRegistered": ("VIBE_TRADING_FALSIFICATION_CONTRACT",),
+    "SequentialLookRecorded": ("VIBE_TRADING_FALSIFICATION_CONTRACT",),
+    "OutcomeDataAccessed": ("VIBE_TRADING_FALSIFICATION_CONTRACT",),
+    "FalsificationResultRecorded": ("VIBE_TRADING_FALSIFICATION_CONTRACT",),
+    "MechanismEvidenceIndexRecorded": ("VIBE_TRADING_FALSIFICATION_CONTRACT",),
+    "ComplementEvidenceRecorded": ("VIBE_TRADING_COMPLEMENT_V2",),
+    "QualityDecisionRecorded": ("VIBE_TRADING_ADMISSION_GATE",),
+    "QualityDecisionV2Recorded": ("VIBE_TRADING_DECISION_V2",),
+    "FinalCandidateFrozen": ("VIBE_TRADING_DECISION_V2",),
+    "FinalTestCapabilityIssued": ("VIBE_TRADING_DECISION_V2",),
+    "FinalTestAccessRecorded": ("VIBE_TRADING_DECISION_V2",),
+    "FinalTestArtifactRecorded": ("VIBE_TRADING_DECISION_V2",),
+    "ForwardPlanV2Recorded": ("VIBE_TRADING_FORWARD_TRACKING",),
+    "ForwardObservationV2Recorded": ("VIBE_TRADING_FORWARD_TRACKING",),
+    "ForwardPlanRecorded": ("VIBE_TRADING_FORWARD_TRACKING",),
+    "ForwardObservationRecorded": ("VIBE_TRADING_FORWARD_TRACKING",),
+}
 
 
 class ResearchEventStore:
@@ -264,25 +300,8 @@ class ResearchEventStore:
         raise ResearchEventAppendError(f"append failed after retries: {last_error}")
 
     def _validate_event_capability(self, event_type: str) -> None:
-        requirements = {
-            "RegistryBootstrapRecordedV2": (
-                "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
-            ),
-            "ProcessActionFrozenV2": (
-                "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
-                "VIBE_TRADING_PROCESS_MEMORY",
-            ),
-            "ProcessOutcomeRecordedV2": (
-                "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
-                "VIBE_TRADING_PROCESS_MEMORY",
-            ),
-            "RetrieverDecisionV2Recorded": (
-                "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
-                "VIBE_TRADING_PROCESS_MEMORY", "VIBE_TRADING_TOPOLOGY_RETRIEVER",
-            ),
-        }
         missing = [
-            name for name in requirements.get(event_type, ())
+            name for name in _EVENT_CAPABILITY_REQUIREMENTS.get(event_type, ())
             if not self.flags.enabled(name)
         ]
         if missing:
@@ -1653,17 +1672,7 @@ class ResearchEventStore:
                 self._validate_factor_definition_identity(event.event_type, validated_payload)
                 self._validate_registry_bootstrap_identity(event.event_type, validated_payload)
                 stored_flags = dict(event.feature_flags)
-                if set(stored_flags) != set(AGS_FLAG_DEFAULTS):
-                    return False
-                if any(not isinstance(value, bool) for value in stored_flags.values()):
-                    return False
-                if not stored_flags["VIBE_TRADING_AGS_ENABLED"] and any(
-                    value
-                    for name, value in stored_flags.items()
-                    if name != "VIBE_TRADING_AGS_ENABLED"
-                ):
-                    return False
-                if not stored_flags["VIBE_TRADING_RESEARCH_EVENTS"]:
+                if not is_valid_ags_flag_snapshot(stored_flags):
                     return False
                 self._reject_secret_or_path(event.code_version, "code_version")
                 expected_warnings, expected_hard_failures = envelope_diagnostics(
