@@ -6,7 +6,12 @@ import pytest
 
 from src.alpha_quality.flags import AGS_FLAG_DEFAULTS, ResolvedAGSFlags
 from src.research_ledger.hash_utils import utc_now_iso
-from src.research_ledger.events import EventDraft, EventValidationError, ResearchEventStore
+from src.research_ledger.events import (
+    EventDraft,
+    EventTransitionError,
+    EventValidationError,
+    ResearchEventStore,
+)
 from src.research_ledger.events.store import _EVENT_CAPABILITY_REQUIREMENTS
 
 
@@ -116,3 +121,63 @@ def test_existing_event_chain_replays_after_future_default_off_flag_is_added(
     )
     assert store.verify_chain()
     assert store.replay().event_count == 1
+
+
+def test_orphan_or_post_terminal_generation_failure_is_rejected(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    failure = EventDraft(
+        event_type="GenerationFailureRecorded",
+        entity_id="trial-failure",
+        run_id="failure-run",
+        payload_schema_version="generation_failure_recorded.v1",
+        payload={
+            "trial_id": "trial-failure",
+            "failure_code": "EVALUATION_ERROR",
+            "failure_kind": "error",
+            "message": "bounded failure",
+            "occurred_at": utc_now_iso(),
+        },
+    )
+    with pytest.raises(EventTransitionError, match="prior active trial"):
+        store.append_event(failure)
+    store.append_event(
+        EventDraft(
+            event_type="TrialStarted",
+            entity_id="trial-failure",
+            run_id="failure-run",
+            payload_schema_version="trial_started.v1",
+            payload={
+                "trial_id": "trial-failure",
+                "candidate_id": "candidate-failure",
+                "data_scope": "train_valid",
+                "objective": "failure-ordering",
+                "started_at": utc_now_iso(),
+            },
+        )
+    )
+    store.append_event(failure)
+    store.append_event(
+        EventDraft(
+            event_type="TrialTerminated",
+            entity_id="trial-failure",
+            run_id="failure-run",
+            payload_schema_version="trial_terminated.v1",
+            payload={
+                "trial_id": "trial-failure",
+                "status": "error",
+                "reason_codes": ["EVALUATION_ERROR"],
+                "decision": "research_only",
+                "evaluation_event_hash": None,
+                "terminated_at": utc_now_iso(),
+            },
+        )
+    )
+    with pytest.raises(EventTransitionError, match="prior active trial"):
+        store.append_event(
+            EventDraft(
+                **{
+                    **failure.__dict__,
+                    "idempotency_key": "post-terminal-failure",
+                }
+            )
+        )
