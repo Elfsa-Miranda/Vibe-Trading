@@ -111,6 +111,12 @@ def test_bundle_reader_rejects_duplicate_keys_and_nonfinite_json(tmp_path: Path)
     target.write_text(original.replace("0.8", "NaN", 1), encoding="utf-8")
     with pytest.raises(ValueError, match="non-finite"):
         reader.read(relative, expected_bundle_hash=recorded.input_bundle.bundle_hash)
+    target.write_text(
+        original.replace("shadow-action", "api_key=secret-value", 1),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="secret or private path"):
+        reader.read(relative, expected_bundle_hash=recorded.input_bundle.bundle_hash)
 
 
 def test_historical_discovery_projection_excludes_v3_decision(tmp_path: Path) -> None:
