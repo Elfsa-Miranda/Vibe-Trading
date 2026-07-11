@@ -7,7 +7,7 @@ from typing import Literal, Mapping
 
 from src.alpha_foundry.activation.artifacts import ActivationArtifactStore
 from src.alpha_quality.flags import ResolvedAGSFlags
-from src.research_ledger.events import ResearchEventStore
+from src.research_ledger.events import ResearchEventEnvelope, ResearchEventStore
 
 
 @dataclass(frozen=True)
@@ -124,6 +124,9 @@ class ActiveRetrieverResolver:
                 for event in evidence
             ):
                 return RetrieverModeResolution("shadow", "ACTIVATION_LEDGER_EVIDENCE_MISSING", decision_hash)
+        source_failure = self._source_evidence_failure(result, evidence)
+        if source_failure is not None:
+            return RetrieverModeResolution("shadow", source_failure, decision_hash)
         if not self._approval_replays(plan, result, decision):
             return RetrieverModeResolution("shadow", "ACTIVATION_DECISION_REPLAY_FAILED", decision_hash)
         provenance = plan.get("provenance")
@@ -142,6 +145,89 @@ class ActiveRetrieverResolver:
         if decision.get("policy_hash") != compatibility.decision_policy_hash:
             return RetrieverModeResolution("shadow", "ACTIVATION_POLICY_MISMATCH", decision_hash)
         return RetrieverModeResolution("active_research_only", "APPROVED_COMPATIBLE", decision_hash)
+
+    @staticmethod
+    def _source_evidence_failure(
+        result: Mapping[str, object],
+        events: list[ResearchEventEnvelope],
+    ) -> str | None:
+        audit_hashes = result.get("run_source_audit_event_hashes")
+        resource_hashes = result.get("resource_evidence_event_hashes")
+        if (
+            not isinstance(audit_hashes, list)
+            or not isinstance(resource_hashes, list)
+            or not audit_hashes
+            or not resource_hashes
+            or any(not isinstance(item, str) for item in audit_hashes)
+            or any(not isinstance(item, str) for item in resource_hashes)
+            or len(audit_hashes) != len(set(audit_hashes))
+            or len(resource_hashes) != len(set(resource_hashes))
+        ):
+            return "ACTIVATION_RUN_SOURCE_EVIDENCE_MISSING"
+
+        by_hash = {event.event_hash: event for event in events}
+        order = {
+            event.event_hash: index for index, event in enumerate(events)
+        }
+        result_events = [
+            event for event in events
+            if event.event_type == "ActivationResultRecorded"
+            and event.payload.get("result_hash") == result.get("result_hash")
+        ]
+        if len(result_events) != 1:
+            return "ACTIVATION_LEDGER_EVIDENCE_MISSING"
+        result_order = order[result_events[0].event_hash]
+        plan_hash = result.get("plan_hash")
+        run_events = [
+            event for event in events
+            if event.event_type == "ActivationRunRecorded"
+            and event.payload.get("plan_hash") == plan_hash
+        ]
+        manifest_hashes = {
+            str(event.payload["manifest_hash"]) for event in run_events
+        }
+        audit_matches = [by_hash.get(str(event_hash)) for event_hash in audit_hashes]
+        resource_matches = [
+            by_hash.get(str(event_hash)) for event_hash in resource_hashes
+        ]
+        if (
+            not manifest_hashes
+            or any(event is None for event in audit_matches + resource_matches)
+            or any(
+                event.event_type != "ActivationRunSourceAudited"
+                or event.payload.get("plan_hash") != plan_hash
+                for event in audit_matches if event is not None
+            )
+            or any(
+                event.event_type != "ActivationResourceMeasured"
+                or event.payload.get("plan_hash") != plan_hash
+                for event in resource_matches if event is not None
+            )
+        ):
+            return "ACTIVATION_RUN_SOURCE_EVIDENCE_MISSING"
+        audits = [event for event in audit_matches if event is not None]
+        resources = [event for event in resource_matches if event is not None]
+        if (
+            {str(event.payload["summary_manifest_hash"]) for event in audits}
+            != manifest_hashes
+            or {str(event.payload["manifest_hash"]) for event in resources}
+            != manifest_hashes
+            or len(audits) != len(manifest_hashes)
+            or len(resources) != len(manifest_hashes)
+        ):
+            return "ACTIVATION_RUN_SOURCE_COVERAGE_MISMATCH"
+        if any(
+            order[event.event_hash] >= result_order
+            for event in audits + resources
+        ):
+            return "ACTIVATION_RUN_SOURCE_ORDER_INVALID"
+        if any(
+            event.payload.get("source_complete") is not True
+            or bool(event.payload.get("source_failure_codes"))
+            for event in audits + resources
+        ):
+            return "ACTIVATION_RUN_SOURCE_INCOMPLETE"
+        return None
 
     @staticmethod
     def _approval_replays(

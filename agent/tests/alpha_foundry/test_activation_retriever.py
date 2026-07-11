@@ -402,6 +402,114 @@ def test_v1_self_reported_approval_cannot_enable_research_mode(tmp_path: Path) -
     ).mode == "shadow"
 
 
+def test_rehashed_v2_labels_without_run_source_events_cannot_activate(
+    tmp_path: Path,
+) -> None:
+    frozen = plan()
+    ledger = event_store(tmp_path)
+    service = ActivationEvidenceService(ledger)
+    service.register_plan(frozen)
+    observed = all_pairs(frozen)
+    for item in observed:
+        service.record_run(item)
+
+    legacy_result = ActivationAnalyzer().analyze(frozen, observed)
+    result_payload = legacy_result.to_dict()
+    result_payload["schema_version"] = "activation_experiment_result.v2"
+    result_payload["run_provenance_schema_version"] = "activation_run_source.v2"
+    result_payload["result_hash"] = canonical_json_hash(
+        result_payload, exclude_keys=("result_hash",)
+    )
+    result_relative = service.artifacts.put("result", result_payload)
+    result_id = (
+        "activation-result-"
+        + result_payload["result_hash"].removeprefix("sha256:")[:24]
+    )
+    ledger.append_event(
+        EventDraft(
+            event_type="ActivationResultRecorded",
+            entity_id=result_id,
+            run_id=frozen.experiment_id,
+            payload_schema_version="activation_result_recorded.v1",
+            idempotency_key="activation-result:" + result_payload["result_hash"],
+            payload={
+                "result_id": result_id,
+                "plan_hash": frozen.plan_hash,
+                "result_hash": result_payload["result_hash"],
+                "complete_pairs": result_payload["complete_pairs"],
+                "invalidation_reasons": result_payload["invalidation_reasons"],
+                "replayable": result_payload["replayable"],
+                "artifact_refs": [
+                    service._reference(  # noqa: SLF001 - adversarial raw append
+                        "result", result_payload["result_hash"], result_relative
+                    )
+                ],
+            },
+        )
+    )
+
+    legacy_decision = RetrieverActivationPolicy().decide(frozen, legacy_result)
+    decision_payload = legacy_decision.to_dict()
+    decision_payload["schema_version"] = "retriever_activation_decision.v2"
+    decision_payload["result_hash"] = result_payload["result_hash"]
+    decision_payload["decision_hash"] = canonical_json_hash(
+        decision_payload, exclude_keys=("decision_hash",)
+    )
+    decision_relative = service.artifacts.put("decision", decision_payload)
+    decision_id = (
+        "activation-decision-"
+        + decision_payload["decision_hash"].removeprefix("sha256:")[:24]
+    )
+    ledger.append_event(
+        EventDraft(
+            event_type="RetrieverActivationDecisionRecorded",
+            entity_id=decision_id,
+            run_id=frozen.experiment_id,
+            payload_schema_version="retriever_activation_decision_recorded.v1",
+            idempotency_key=(
+                "activation-decision:" + decision_payload["decision_hash"]
+            ),
+            payload={
+                "activation_decision_id": decision_id,
+                "plan_hash": frozen.plan_hash,
+                "result_hash": result_payload["result_hash"],
+                "decision_hash": decision_payload["decision_hash"],
+                "policy_hash": decision_payload["policy_hash"],
+                "verdict": decision_payload["verdict"],
+                "reasons": decision_payload["reasons"],
+                "active_research_only": decision_payload["active_research_only"],
+                "artifact_refs": [
+                    service._reference(  # noqa: SLF001 - adversarial raw append
+                        "decision",
+                        decision_payload["decision_hash"],
+                        decision_relative,
+                    )
+                ],
+            },
+        )
+    )
+    compatibility = ActivationCompatibility(
+        code_hash=frozen.provenance.code_hash,
+        generator_hash=frozen.provenance.generator_hash,
+        grammar_hash=frozen.provenance.grammar_hash,
+        treatment_policy_hash=frozen.provenance.treatment_policy_hash,
+        decision_policy_hash=frozen.decision_policy_hash,
+        train_snapshot_hash=frozen.provenance.train_snapshot_hash,
+        valid_snapshot_hash=frozen.provenance.valid_snapshot_hash,
+    )
+    resolution = ActiveRetrieverResolver(
+        service.artifacts, event_store=ledger
+    ).resolve(
+        flags=enabled_flags(active=True),
+        plan_hash=frozen.plan_hash,
+        result_hash=result_payload["result_hash"],
+        decision_hash=decision_payload["decision_hash"],
+        compatibility=compatibility,
+    )
+    assert resolution.mode == "shadow"
+    assert resolution.reason == "ACTIVATION_RUN_SOURCE_EVIDENCE_MISSING"
+
+
 def test_artifacts_are_strict_content_addressed_and_reject_secrets(tmp_path: Path) -> None:
     frozen = plan()
     store = ActivationArtifactStore(tmp_path)
