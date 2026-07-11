@@ -135,6 +135,12 @@ _FIELDS: dict[EvidenceKind, dict[str, str]] = {
 
 def _validate_payload(kind: EvidenceKind, payload: Mapping[str, Any]) -> dict[str, Any]:
     fields = _FIELDS[kind]
+    if kind == "ledger" and "ledger_schema_version" in payload:
+        fields = {
+            **fields,
+            "ledger_schema_version": "ledger_schema",
+            "infrastructure_failure_event_hashes": "hash_list",
+        }
     if set(payload) != set(fields):
         unknown = sorted(set(payload) - set(fields))
         missing = sorted(set(fields) - set(payload))
@@ -152,6 +158,16 @@ def _validate_payload(kind: EvidenceKind, payload: Mapping[str, Any]) -> dict[st
             _validate_optional_finite(value, path)
         elif validator == "hash":
             _require_hash(value, path)
+        elif validator == "hash_list":
+            if not isinstance(value, (list, tuple)) or tuple(value) != tuple(
+                sorted(set(value))
+            ):
+                raise ValueError(f"{path} must be a sorted unique hash list")
+            for item in value:
+                _require_hash(item, path)
+        elif validator == "ledger_schema":
+            if value != "decision_ledger_evidence.v2":
+                raise ValueError(f"{path} has an unknown schema")
         elif validator == "limitations":
             _validate_limitations(value, path)
         elif validator == "positive_int":

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -65,6 +66,8 @@ def _defaults(kind: str) -> dict[str, object]:
             "complete": True,
             "terminal_train_valid": True,
             "reduced_durability": False,
+            "ledger_schema_version": "decision_ledger_evidence.v2",
+            "infrastructure_failure_event_hashes": [],
             "limitations": [],
         },
         "mechanism": {
@@ -185,6 +188,52 @@ def test_caller_cannot_supply_decision_failures_caps_or_total_score() -> None:
             DecisionEvidenceRefs.from_mapping({**base, forbidden: "caller truth"})
 
 
+def test_legacy_caller_score_field_is_inert_in_decision_v2_path() -> None:
+    digest = canonical_json_hash({"fixture": "hash"})
+    with pytest.raises(ValueError, match="forbidden"):
+        DecisionEvidenceRefs.from_mapping(
+            {
+                "factor_spec_id": "factor-1",
+                "scorecard_hash": digest,
+                "execution_hash": None,
+                "snapshot_hash": None,
+                "ledger_watermark_hash": digest,
+                "mechanism_evidence_hash": None,
+                "complement_evidence_hash": None,
+                "final_test_artifact_hash": None,
+                "forward_plan_hash": None,
+                "total_quality_score": 100.0,
+            }
+        )
+
+
+def test_decision_v2_runner_does_not_trust_legacy_total_quality_score_rows(
+    tmp_path: Path,
+) -> None:
+    repository = DecisionEvidenceRepository(tmp_path / "evidence")
+    refs = _refs(repository)
+    legacy_hash = canonical_json_hash({"legacy": "decision-row"})
+    legacy_path = repository.root / (
+        legacy_hash.removeprefix("sha256:") + ".json"
+    )
+    legacy_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "alpha_quality_decision.v1",
+                "factor_id": "factor-1",
+                "total_quality_score": 999.0,
+                "decision": "paper_candidate",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _runner(repository).run(replace(refs, scorecard_hash=legacy_hash))
+
+    assert result.decision == "research_only"
+    assert "EVIDENCE_REFERENCE_UNRESOLVED" in result.caps
+
+
 def test_invalid_formula_is_rejected_before_scorecard(tmp_path: Path) -> None:
     repository = DecisionEvidenceRepository(tmp_path / "evidence")
     result = _runner(repository).run(
@@ -219,6 +268,94 @@ def test_missing_contract_or_complement_does_not_fail_open(tmp_path: Path) -> No
         result = _runner(repository).run(_refs(repository, omit=missing))
         assert result.decision == "research_only"
         assert result.caps
+
+
+def test_infrastructure_failure_event_caps_decision_at_research_only(
+    tmp_path: Path,
+) -> None:
+    repository = DecisionEvidenceRepository(tmp_path / "evidence")
+    failure_hash = canonical_json_hash({"event": "infrastructure-failure"})
+
+    result = _runner(repository).run(
+        _refs(
+            repository,
+            ledger={"infrastructure_failure_event_hashes": [failure_hash]},
+            final_test={"quality_passed": True, "final_oos_ic": 999.0},
+        )
+    )
+
+    assert result.decision == "research_only"
+    assert "INFRASTRUCTURE_FAILURE" in result.caps
+
+
+def test_legacy_ledger_without_infrastructure_provenance_is_capped(
+    tmp_path: Path,
+) -> None:
+    repository = DecisionEvidenceRepository(tmp_path / "evidence")
+    legacy_ledger = _defaults("ledger")
+    legacy_ledger.pop("ledger_schema_version")
+    legacy_ledger.pop("infrastructure_failure_event_hashes")
+    legacy_hash = repository.put(
+        DecisionEvidenceRecord.create(
+            evidence_kind="ledger",
+            factor_spec_id="factor-1",
+            payload=legacy_ledger,
+        )
+    )
+
+    result = _runner(repository).run(
+        replace(_refs(repository), ledger_watermark_hash=legacy_hash)
+    )
+
+    assert result.decision == "research_only"
+    assert "LEGACY_LEDGER_INFRASTRUCTURE_STATUS_UNVERIFIED" in result.caps
+
+
+def test_not_applicable_evidence_does_not_impose_cap(tmp_path: Path) -> None:
+    repository = DecisionEvidenceRepository(tmp_path / "evidence")
+    policy = DecisionV2Policy(
+        schema_version="decision_v2_policy.v1",
+        policy_version="decision-v2-policy.no-mechanism-complement",
+        require_mechanism=False,
+        require_complement=False,
+    )
+    runner = QualityDecisionV2Runner(
+        flags=_flags(), policy=policy, repository=repository
+    )
+
+    result = runner.run(_refs(repository, omit={"mechanism", "complement"}))
+
+    assert result.decision == "candidate_zoo"
+    assert "MECHANISM_EVIDENCE_MISSING" not in result.caps
+    assert "COMPLEMENT_EVIDENCE_MISSING" not in result.caps
+
+
+def test_unavailable_decisive_evidence_is_inconclusive_not_rejected(
+    tmp_path: Path,
+) -> None:
+    repository = DecisionEvidenceRepository(tmp_path / "evidence")
+
+    result = _runner(repository).run(
+        _refs(
+            repository,
+            mechanism={"decisive_available": False, "ordinal_state": "inconclusive"},
+        )
+    )
+
+    assert result.decision == "research_only"
+    assert "MECHANISM_EVIDENCE_INCONCLUSIVE" in result.caps
+    assert "MECHANISM_EVIDENCE_INCONCLUSIVE" not in result.reasons
+
+
+def test_reduced_durability_cap_is_applied_inside_runner(tmp_path: Path) -> None:
+    repository = DecisionEvidenceRepository(tmp_path / "evidence")
+
+    result = _runner(repository).run(
+        _refs(repository, ledger={"reduced_durability": True})
+    )
+
+    assert result.decision == "research_only"
+    assert "REDUCED_DURABILITY" in result.caps
 
 
 def test_final_oos_ic_alone_cannot_create_paper_candidate(tmp_path: Path) -> None:

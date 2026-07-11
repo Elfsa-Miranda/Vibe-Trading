@@ -128,6 +128,10 @@ class QualityDecisionV2Runner:
                 caps.add("TERMINAL_TRAIN_VALID_EVIDENCE_MISSING")
             if ledger["reduced_durability"]:
                 caps.add("REDUCED_DURABILITY")
+            if ledger.get("ledger_schema_version") != "decision_ledger_evidence.v2":
+                caps.add("LEGACY_LEDGER_INFRASTRUCTURE_STATUS_UNVERIFIED")
+            elif ledger["infrastructure_failure_event_hashes"]:
+                caps.add("INFRASTRUCTURE_FAILURE")
 
         snapshot = self._payload(records, "snapshot")
         if snapshot is not None:
