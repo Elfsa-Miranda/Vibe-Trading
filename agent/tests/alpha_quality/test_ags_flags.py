@@ -20,7 +20,7 @@ def test_all_ags_flags_default_false_and_master_flag_dominates() -> None:
         }
     )
 
-    assert len(AGS_FLAG_DEFAULTS) == 14
+    assert len(AGS_FLAG_DEFAULTS) == 15
     assert set(flags.as_dict()) == set(AGS_FLAG_DEFAULTS)
     assert not any(flags.as_dict().values())
 
@@ -71,9 +71,8 @@ def test_historical_event_flag_snapshot_survives_future_default_off_flag(
         False,
     )
     assert is_valid_ags_flag_snapshot(historical)
-    current = {
-        **historical,
-        "VIBE_TRADING_FUTURE_DEFAULT_OFF_TEST_CAPABILITY": False,
-    }
+    current = {name: False for name in AGS_FLAG_DEFAULTS}
+    current["VIBE_TRADING_AGS_ENABLED"] = True
+    current["VIBE_TRADING_RESEARCH_EVENTS"] = True
     assert is_valid_ags_flag_snapshot(current)
     assert not is_valid_ags_flag_snapshot({**current, "CALLER_INVENTED_FLAG": False})

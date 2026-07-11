@@ -63,6 +63,22 @@ _EVENT_CAPABILITY_REQUIREMENTS: Mapping[str, tuple[str, ...]] = {
         "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
         "VIBE_TRADING_PROCESS_MEMORY", "VIBE_TRADING_TOPOLOGY_RETRIEVER",
     ),
+    "ActivationPlanRegistered": (
+        "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
+        "VIBE_TRADING_PROCESS_MEMORY", "VIBE_TRADING_TOPOLOGY_RETRIEVER",
+    ),
+    "ActivationRunRecorded": (
+        "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
+        "VIBE_TRADING_PROCESS_MEMORY", "VIBE_TRADING_TOPOLOGY_RETRIEVER",
+    ),
+    "ActivationResultRecorded": (
+        "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
+        "VIBE_TRADING_PROCESS_MEMORY", "VIBE_TRADING_TOPOLOGY_RETRIEVER",
+    ),
+    "RetrieverActivationDecisionRecorded": (
+        "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
+        "VIBE_TRADING_PROCESS_MEMORY", "VIBE_TRADING_TOPOLOGY_RETRIEVER",
+    ),
     "FalsificationContractRegistered": ("VIBE_TRADING_FALSIFICATION_CONTRACT",),
     "SequentialProtocolRegistered": ("VIBE_TRADING_FALSIFICATION_CONTRACT",),
     "SequentialLookRecorded": ("VIBE_TRADING_FALSIFICATION_CONTRACT",),
@@ -462,6 +478,10 @@ class ResearchEventStore:
             "TrialTerminated": "trial_id",
             "RetrieverDecisionRecorded": "decision_id",
             "RetrieverDecisionV2Recorded": "decision_id",
+            "ActivationPlanRegistered": "experiment_id",
+            "ActivationRunRecorded": "manifest_id",
+            "ActivationResultRecorded": "result_id",
+            "RetrieverActivationDecisionRecorded": "activation_decision_id",
             "FalsificationContractRegistered": "contract_id",
             "SequentialProtocolRegistered": "protocol_id",
             "SequentialLookRecorded": "look_id",
@@ -694,6 +714,23 @@ class ResearchEventStore:
             return
         if event_type == "RetrieverDecisionV2Recorded":
             self._validate_retriever_v2_transition(conn, payload)
+            return
+        if event_type == "ActivationPlanRegistered":
+            prior = conn.execute(
+                "SELECT 1 FROM research_events WHERE event_type = 'ActivationPlanRegistered' AND entity_id = ?",
+                (draft.entity_id,),
+            ).fetchone()
+            if prior is not None:
+                raise EventTransitionError("activation experiment is already registered")
+            return
+        if event_type == "ActivationRunRecorded":
+            self._validate_activation_run_transition(conn, payload)
+            return
+        if event_type == "ActivationResultRecorded":
+            self._validate_activation_result_transition(conn, payload)
+            return
+        if event_type == "RetrieverActivationDecisionRecorded":
+            self._validate_activation_decision_transition(conn, payload)
             return
         if event_type == "ProcessOutcomeRecorded":
             action = conn.execute(
@@ -1040,6 +1077,98 @@ class ResearchEventStore:
                     break
             if not eligible:
                 raise EventTransitionError("retriever v2 candidate lacks terminal train/valid evidence")
+
+    @staticmethod
+    def _activation_plan_payload(
+        conn: sqlite3.Connection,
+        plan_hash: str,
+    ) -> dict[str, Any]:
+        row = conn.execute(
+            "SELECT payload FROM research_events WHERE event_type = 'ActivationPlanRegistered' AND json_extract(payload, '$.plan_hash') = ? ORDER BY seq DESC LIMIT 1",
+            (plan_hash,),
+        ).fetchone()
+        if row is None:
+            raise EventTransitionError("activation evidence has no prior registered plan")
+        return json.loads(str(row["payload"]))
+
+    @classmethod
+    def _validate_activation_run_transition(
+        cls,
+        conn: sqlite3.Connection,
+        payload: Mapping[str, Any],
+    ) -> None:
+        cls._activation_plan_payload(conn, str(payload["plan_hash"]))
+        prior = conn.execute(
+            "SELECT 1 FROM research_events WHERE event_type = 'ActivationRunRecorded' AND entity_id = ?",
+            (payload["manifest_id"],),
+        ).fetchone()
+        if prior is not None:
+            raise EventTransitionError("activation run manifest is already recorded")
+        result = conn.execute(
+            "SELECT 1 FROM research_events WHERE event_type = 'ActivationResultRecorded' AND json_extract(payload, '$.plan_hash') = ?",
+            (payload["plan_hash"],),
+        ).fetchone()
+        if result is not None:
+            raise EventTransitionError("activation run cannot append after its frozen result")
+
+    @classmethod
+    def _validate_activation_result_transition(
+        cls,
+        conn: sqlite3.Connection,
+        payload: Mapping[str, Any],
+    ) -> None:
+        cls._activation_plan_payload(conn, str(payload["plan_hash"]))
+        prior = conn.execute(
+            "SELECT 1 FROM research_events WHERE event_type = 'ActivationResultRecorded' AND json_extract(payload, '$.plan_hash') = ?",
+            (payload["plan_hash"],),
+        ).fetchone()
+        if prior is not None:
+            raise EventTransitionError("activation plan already has a frozen result")
+        runs = conn.execute(
+            "SELECT payload FROM research_events WHERE event_type = 'ActivationRunRecorded' AND json_extract(payload, '$.plan_hash') = ? ORDER BY seq ASC",
+            (payload["plan_hash"],),
+        ).fetchall()
+        if not runs:
+            if payload["replayable"] or not payload["invalidation_reasons"]:
+                raise EventTransitionError(
+                    "outcome-free activation result must explicitly invalidate preflight"
+                )
+            return
+        arms: dict[str, set[str]] = {}
+        for row in runs:
+            run = json.loads(str(row["payload"]))
+            arms.setdefault(str(run["pair_id"]), set()).add(str(run["arm"]))
+        complete_pairs = sum(1 for pair_arms in arms.values() if pair_arms == {"control", "treatment"})
+        if int(payload["complete_pairs"]) != complete_pairs:
+            raise EventTransitionError("activation result pair count does not replay from run events")
+
+    @classmethod
+    def _validate_activation_decision_transition(
+        cls,
+        conn: sqlite3.Connection,
+        payload: Mapping[str, Any],
+    ) -> None:
+        plan = cls._activation_plan_payload(conn, str(payload["plan_hash"]))
+        result_row = conn.execute(
+            "SELECT payload FROM research_events WHERE event_type = 'ActivationResultRecorded' AND json_extract(payload, '$.result_hash') = ? ORDER BY seq DESC LIMIT 1",
+            (payload["result_hash"],),
+        ).fetchone()
+        if result_row is None:
+            raise EventTransitionError("activation decision has no prior frozen result")
+        result = json.loads(str(result_row["payload"]))
+        if result["plan_hash"] != payload["plan_hash"]:
+            raise EventTransitionError("activation decision result belongs to another plan")
+        if payload["verdict"] == "approved":
+            if plan["phase"] != "confirmatory":
+                raise EventTransitionError("pilot activation cannot be approved")
+            if not result["replayable"] or result["invalidation_reasons"]:
+                raise EventTransitionError("invalid or unreplayable activation cannot be approved")
+        prior = conn.execute(
+            "SELECT 1 FROM research_events WHERE event_type = 'RetrieverActivationDecisionRecorded' AND json_extract(payload, '$.plan_hash') = ?",
+            (payload["plan_hash"],),
+        ).fetchone()
+        if prior is not None:
+            raise EventTransitionError("activation plan already has a deterministic decision")
 
     @staticmethod
     def _validate_complement_evidence_transition(
@@ -1738,6 +1867,13 @@ class ResearchEventStore:
         final_artifacts: dict[str, Mapping[str, Any]] = {}
         forward_v2_plans: dict[str, Mapping[str, Any]] = {}
         forward_v2_observations: dict[str, list[Mapping[str, Any]]] = {}
+        activation_plans: dict[str, Mapping[str, Any]] = {}
+        activation_experiments: set[str] = set()
+        activation_runs: dict[str, list[Mapping[str, Any]]] = {}
+        activation_manifest_ids: set[str] = set()
+        activation_results: dict[str, Mapping[str, Any]] = {}
+        activation_result_plans: set[str] = set()
+        activation_decision_plans: set[str] = set()
         for event in events:
             payload = event.payload
             if event.event_type == "FactorDefinitionRecorded":
@@ -1949,6 +2085,63 @@ class ResearchEventStore:
                     != payload["source_evaluation_event_hash"]
                 ):
                     return False
+            elif event.event_type == "ActivationPlanRegistered":
+                plan_hash = str(payload["plan_hash"])
+                experiment_id = str(payload["experiment_id"])
+                if plan_hash in activation_plans or experiment_id in activation_experiments:
+                    return False
+                activation_plans[plan_hash] = payload
+                activation_experiments.add(experiment_id)
+                activation_runs[plan_hash] = []
+            elif event.event_type == "ActivationRunRecorded":
+                plan_hash = str(payload["plan_hash"])
+                manifest_id = str(payload["manifest_id"])
+                if (
+                    plan_hash not in activation_plans
+                    or plan_hash in activation_result_plans
+                    or manifest_id in activation_manifest_ids
+                ):
+                    return False
+                activation_manifest_ids.add(manifest_id)
+                activation_runs[plan_hash].append(payload)
+            elif event.event_type == "ActivationResultRecorded":
+                plan_hash = str(payload["plan_hash"])
+                result_hash = str(payload["result_hash"])
+                if plan_hash not in activation_plans or plan_hash in activation_result_plans:
+                    return False
+                runs = activation_runs[plan_hash]
+                if not runs:
+                    if payload["replayable"] or not payload["invalidation_reasons"]:
+                        return False
+                else:
+                    arms: dict[str, set[str]] = {}
+                    for run in runs:
+                        arms.setdefault(str(run["pair_id"]), set()).add(str(run["arm"]))
+                    if int(payload["complete_pairs"]) != sum(
+                        1 for pair_arms in arms.values()
+                        if pair_arms == {"control", "treatment"}
+                    ):
+                        return False
+                activation_results[result_hash] = payload
+                activation_result_plans.add(plan_hash)
+            elif event.event_type == "RetrieverActivationDecisionRecorded":
+                plan_hash = str(payload["plan_hash"])
+                result = activation_results.get(str(payload["result_hash"]))
+                plan = activation_plans.get(plan_hash)
+                if (
+                    result is None
+                    or plan is None
+                    or result["plan_hash"] != plan_hash
+                    or plan_hash in activation_decision_plans
+                ):
+                    return False
+                if payload["verdict"] == "approved" and (
+                    plan["phase"] != "confirmatory"
+                    or not result["replayable"]
+                    or result["invalidation_reasons"]
+                ):
+                    return False
+                activation_decision_plans.add(plan_hash)
             elif event.event_type == "QualityDecisionV2Recorded":
                 if str(payload["factor_spec_id"]) not in definitions:
                     return False

@@ -189,6 +189,18 @@ def _artifact_list(value: Any, path: str) -> None:
         _string(item["media_type"], f"{path}[{index}].media_type")
 
 
+def _activation_terminal_counts(value: Any, path: str) -> None:
+    _mapping(value, path)
+    expected = {
+        "success", "reject", "skip", "invalid", "duplicate", "timeout", "error",
+        "infrastructure_failure",
+    }
+    if set(value) != expected:
+        raise EventValidationError(f"{path} must contain the closed terminal-status set")
+    for key in sorted(expected):
+        _nonnegative_integer(value[key], f"{path}.{key}")
+
+
 def _registry_root_list(value: Any, path: str) -> None:
     if not isinstance(value, (list, tuple)):
         raise EventValidationError(f"{path} must be a list")
@@ -571,6 +583,57 @@ _PAYLOAD_SPECS: dict[str, PayloadSpec] = {
             "propensity_semantics": _enum("sequential_softmax_draw_probability.v1"),
             "components": _retriever_component_list,
             "shadow_only": _boolean,
+        },
+    ),
+    "ActivationPlanRegistered": PayloadSpec(
+        "activation_plan_registered.v1",
+        {
+            "experiment_id": _string,
+            "plan_hash": _hash,
+            "phase": _enum("pilot", "confirmatory"),
+            "registered_at": _timestamp,
+            "artifact_refs": _artifact_list,
+        },
+    ),
+    "ActivationRunRecorded": PayloadSpec(
+        "activation_run_recorded.v1",
+        {
+            "manifest_id": _string,
+            "plan_hash": _hash,
+            "manifest_hash": _hash,
+            "pair_id": _string,
+            "run_group_id": _string,
+            "arm": _enum("control", "treatment"),
+            "terminal_status_counts": _activation_terminal_counts,
+            "complete": _boolean,
+            "contaminated": _boolean,
+            "artifact_refs": _artifact_list,
+        },
+    ),
+    "ActivationResultRecorded": PayloadSpec(
+        "activation_result_recorded.v1",
+        {
+            "result_id": _string,
+            "plan_hash": _hash,
+            "result_hash": _hash,
+            "complete_pairs": _nonnegative_integer,
+            "invalidation_reasons": _reason_codes,
+            "replayable": _boolean,
+            "artifact_refs": _artifact_list,
+        },
+    ),
+    "RetrieverActivationDecisionRecorded": PayloadSpec(
+        "retriever_activation_decision_recorded.v1",
+        {
+            "activation_decision_id": _string,
+            "plan_hash": _hash,
+            "result_hash": _hash,
+            "decision_hash": _hash,
+            "policy_hash": _hash,
+            "verdict": _enum("approved", "rejected", "inconclusive", "invalidated"),
+            "reasons": _reason_codes,
+            "active_research_only": _boolean,
+            "artifact_refs": _artifact_list,
         },
     ),
     "FalsificationContractRegistered": PayloadSpec(
@@ -1024,6 +1087,16 @@ def _validate_cross_field_rules(event_type: str, payload: Mapping[str, Any]) -> 
         }
         if canonical_json_hash(decision_content) != payload["decision_hash"]:
             raise EventValidationError("retriever v2 decision hash is invalid")
+    if event_type == "ActivationRunRecorded":
+        attempted = sum(int(value) for value in payload["terminal_status_counts"].values())
+        if payload["complete"] and attempted == 0:
+            raise EventValidationError("complete activation run must contain terminal attempts")
+    if event_type == "ActivationResultRecorded":
+        if payload["invalidation_reasons"] and payload["replayable"]:
+            raise EventValidationError("invalidated activation result cannot be replayable")
+    if event_type == "RetrieverActivationDecisionRecorded":
+        if payload["active_research_only"] != (payload["verdict"] == "approved"):
+            raise EventValidationError("only approved activation may enable research influence")
     if event_type == "SequentialProtocolRegistered":
         if payload["maximum_looks"] < 2:
             raise EventValidationError("sequential protocol requires at least two looks")
@@ -1267,6 +1340,13 @@ def envelope_diagnostics(
         hard_failures.add(str(payload["failure_code"]))
     if event_type == "RetrieverDecisionV2Recorded":
         warnings.add("TOPOLOGY_RETRIEVER_SHADOW_ONLY")
+    if event_type == "ActivationResultRecorded" and payload["invalidation_reasons"]:
+        hard_failures |= {str(code) for code in payload["invalidation_reasons"]}
+    if event_type == "RetrieverActivationDecisionRecorded":
+        if payload["verdict"] != "approved":
+            warnings.add("TOPOLOGY_RETRIEVER_NOT_ACTIVATED")
+        if payload["verdict"] in {"rejected", "invalidated"}:
+            hard_failures |= {str(code) for code in payload["reasons"]}
     if event_type == "TrialTerminated":
         codes = {str(code) for code in payload["reason_codes"]}
         if payload["status"] == "skip":

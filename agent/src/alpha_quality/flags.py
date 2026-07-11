@@ -20,6 +20,7 @@ AGS_FLAG_DEFAULTS: dict[str, bool] = {
     "VIBE_TRADING_FACTOR_DAG": False,
     "VIBE_TRADING_PROCESS_MEMORY": False,
     "VIBE_TRADING_TOPOLOGY_RETRIEVER": False,
+    "VIBE_TRADING_TOPOLOGY_RETRIEVER_ACTIVE": False,
     "VIBE_TRADING_FALSIFICATION_CONTRACT": False,
     "VIBE_TRADING_COMPLEMENT_V2": False,
     "VIBE_TRADING_DECISION_V2": False,
@@ -28,8 +29,13 @@ AGS_FLAG_DEFAULTS: dict[str, bool] = {
 # research_event.v1 envelopes emitted before any future default-off capability
 # additions carry this exact frozen key set.  It is a replay contract: never
 # rewrite historical event hashes merely because a new flag is added.
-AGS_FLAG_SNAPSHOT_KEYSET_V1 = frozenset(AGS_FLAG_DEFAULTS)
-_LEGACY_FLAG_KEYSETS = (AGS_FLAG_SNAPSHOT_KEYSET_V1,)
+AGS_FLAG_SNAPSHOT_KEYSET_V1 = frozenset(
+    name
+    for name in AGS_FLAG_DEFAULTS
+    if name != "VIBE_TRADING_TOPOLOGY_RETRIEVER_ACTIVE"
+)
+AGS_FLAG_SNAPSHOT_KEYSET_V2 = frozenset(AGS_FLAG_DEFAULTS)
+_LEGACY_FLAG_KEYSETS = (AGS_FLAG_SNAPSHOT_KEYSET_V1, AGS_FLAG_SNAPSHOT_KEYSET_V2)
 
 _MASTER_FLAG = "VIBE_TRADING_AGS_ENABLED"
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
@@ -123,6 +129,7 @@ class ResolvedAGSFlags:
 __all__ = [
     "AGS_FLAG_DEFAULTS",
     "AGS_FLAG_SNAPSHOT_KEYSET_V1",
+    "AGS_FLAG_SNAPSHOT_KEYSET_V2",
     "ResolvedAGSFlags",
     "is_valid_ags_flag_snapshot",
 ]
