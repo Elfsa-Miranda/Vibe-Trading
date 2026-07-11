@@ -180,6 +180,7 @@ def test_closed_payload_registry_covers_every_required_event_type() -> None:
         "RetrieverDecisionRecorded",
         "RetrieverDecisionV2Recorded",
         "RetrieverDecisionV3Recorded",
+        "OfficialSearchControlRecorded",
         "ActivationPlanRegistered",
         "ActivationRunRecorded",
         "ActivationRunSourceAudited",
@@ -401,7 +402,7 @@ def test_every_registered_payload_schema_validates_a_complete_production_shape()
                 ],
                     "shadow_only": True,
                 },
-                "RetrieverDecisionV3Recorded": {
+        "RetrieverDecisionV3Recorded": {
                     "decision_id": "retriever-v3-1",
                     "decision_hash": digest,
                     "shadow_decision_hash": digest,
@@ -554,6 +555,17 @@ def test_every_registered_payload_schema_validates_a_complete_production_shape()
             "contract_id": "contract-1",
             "contract_hash": digest,
             "outcome": "inconclusive",
+            "artifact_refs": [],
+        },
+        "OfficialSearchControlRecorded": {
+            "control_id": "official-control-1",
+            "evidence_hash": digest,
+            "policy_hash": digest,
+            "output_hash": digest,
+            "search_run_id": "control-run-1",
+            "data_snapshot_hash": digest,
+            "candidate_count": 1,
+            "terminal_event_hashes": [digest],
             "artifact_refs": [],
         },
         "ActivationRunSourceAudited": {
