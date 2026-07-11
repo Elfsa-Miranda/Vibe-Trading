@@ -67,6 +67,10 @@ _EVENT_CAPABILITY_REQUIREMENTS: Mapping[str, tuple[str, ...]] = {
         "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
         "VIBE_TRADING_PROCESS_MEMORY", "VIBE_TRADING_TOPOLOGY_RETRIEVER",
     ),
+    "RetrieverDecisionV4Recorded": (
+        "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
+        "VIBE_TRADING_PROCESS_MEMORY", "VIBE_TRADING_TOPOLOGY_RETRIEVER",
+    ),
     "OfficialSearchControlRecorded": (
         "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_RESEARCH_EVENTS",
     ),
@@ -281,6 +285,7 @@ class ResearchEventStore:
         self._validate_artifacts(payload)
         self._validate_external_process_evidence(draft.event_type, payload)
         self._validate_external_retriever_evidence(draft.event_type, payload)
+        self._validate_external_retriever_v4_evidence(draft.event_type, payload)
         self._validate_external_quality_decision_evidence(draft.event_type, payload)
         self._validate_external_activation_source_audit(draft.event_type, payload)
         self._validate_external_official_control_evidence(draft.event_type, payload)
@@ -495,6 +500,7 @@ class ResearchEventStore:
             "RetrieverDecisionRecorded": "decision_id",
             "RetrieverDecisionV2Recorded": "decision_id",
             "RetrieverDecisionV3Recorded": "decision_id",
+            "RetrieverDecisionV4Recorded": "decision_id",
             "OfficialSearchControlRecorded": "control_id",
             "ActivationPlanRegistered": "experiment_id",
             "ActivationRunRecorded": "manifest_id",
@@ -654,6 +660,115 @@ class ResearchEventStore:
             raise EventValidationError(
                 "retriever v3 event differs from its deterministically rebuilt decision"
             )
+
+    def _validate_external_retriever_v4_evidence(
+        self,
+        event_type: str,
+        payload: Mapping[str, Any],
+    ) -> None:
+        if event_type != "RetrieverDecisionV4Recorded":
+            return
+        references = [
+            reference for reference in payload["artifact_refs"]
+            if reference["media_type"]
+            == "application/vnd.vibe.retriever-input-bundle-v4+json"
+        ]
+        if len(references) != 1:
+            raise EventValidationError("retriever v4 requires one source input bundle")
+        try:
+            from src.alpha_foundry.control_evidence import (
+                OfficialSearchControlArtifactStoreV1,
+            )
+            from src.alpha_foundry.dag import FactorDAGQuery
+            from src.alpha_foundry.retrieval.evidence_v4 import (
+                RetrieverInputArtifactStoreV4,
+            )
+            from src.alpha_foundry.retrieval.policy import ActivationRetrieverPolicy
+            from src.alpha_foundry.retrieval.shadow import ShadowRetriever
+            from src.alpha_quality.scope import DiscoveryEvidenceProjector
+
+            bundle = RetrieverInputArtifactStoreV4(self.artifact_root).read(
+                str(references[0]["relative_path"]),
+                str(payload["input_bundle_hash"]),
+            )
+            source = bundle.retriever_input
+            controls = [
+                event for event in self.query_events(
+                    event_type="OfficialSearchControlRecorded"
+                )
+                if event.event_hash == bundle.control_evidence_event_hash
+            ]
+            if len(controls) != 1:
+                raise ValueError("retriever v4 control event is missing")
+            control_event = controls[0]
+            control_refs = [
+                reference for reference in control_event.payload["artifact_refs"]
+                if reference["media_type"]
+                == OfficialSearchControlArtifactStoreV1.media_type
+            ]
+            if len(control_refs) != 1:
+                raise ValueError("retriever v4 control artifact is missing")
+            control = OfficialSearchControlArtifactStoreV1(self.artifact_root).read(
+                str(control_refs[0]["relative_path"]),
+                bundle.control_evidence_hash,
+            )
+            official_ids = tuple(str(item["candidate_id"]) for item in control.candidates)
+            if (
+                official_ids != source.official_candidate_ids
+                or control_event.payload["evidence_hash"]
+                != bundle.control_evidence_hash
+                or control_event.payload["policy_hash"]
+                != control.policy.policy_hash
+                or control_event.payload["output_hash"] != control.output_hash
+                or control.output_hash != payload["official_output_hash"]
+                or control.policy.policy_hash != payload["control_policy_hash"]
+                or control.data_snapshot_hash != source.data_snapshot_hash
+                or control_event.run_id != control.run_id
+            ):
+                raise ValueError("retriever v4 control binding differs")
+            discovery = DiscoveryEvidenceProjector(
+                flags=self.flags
+            ).project_at_watermark(
+                self,
+                data_snapshot_hash=source.data_snapshot_hash,
+                watermark_event_hash=source.eligible_event_watermark,
+            )
+            decision = ShadowRetriever(
+                flags=self.flags,
+                policy=ActivationRetrieverPolicy(**dict(source.policy_config)),
+            ).decide(
+                official_candidate_ids=official_ids,
+                evidence=discovery,
+                query=FactorDAGQuery(discovery.factual.dag),
+                candidates=source.candidates,
+                seed=source.seed,
+                candidate_budget=source.candidate_budget,
+            )
+        except (KeyError, OSError, TypeError, ValueError, RuntimeError) as exc:
+            raise EventValidationError(
+                "retriever v4 source evidence cannot rebuild the decision"
+            ) from exc
+        expected = {
+            "shadow_decision_hash": decision.decision_hash,
+            "input_bundle_hash": bundle.bundle_hash,
+            "control_evidence_event_hash": bundle.control_evidence_event_hash,
+            "control_evidence_hash": bundle.control_evidence_hash,
+            "control_policy_hash": control.policy.policy_hash,
+            "selected_factor_spec_ids": list(decision.selected_factor_spec_ids),
+            "seed": decision.seed,
+            "policy_version": decision.policy_version,
+            "policy_hash": decision.policy_hash,
+            "policy_config": dict(decision.policy_config),
+            "eligible_event_watermark": decision.eligible_event_watermark,
+            "data_snapshot_hash": decision.data_snapshot_hash,
+            "candidate_budget": decision.candidate_budget,
+            "official_output_hash": decision.official_output_hash,
+            "propensity_semantics": decision.propensity_semantics,
+            "components": [component.to_dict() for component in decision.components],
+            "shadow_only": decision.shadow_only,
+        }
+        if any(payload[name] != value for name, value in expected.items()):
+            raise EventValidationError("retriever v4 differs from deterministic rebuild")
 
     def _validate_external_quality_decision_evidence(
         self,
@@ -1019,6 +1134,28 @@ class ResearchEventStore:
             return
         if event_type == "RetrieverDecisionV3Recorded":
             self._validate_retriever_v2_transition(conn, payload)
+            return
+        if event_type == "RetrieverDecisionV4Recorded":
+            self._validate_retriever_v2_transition(conn, payload)
+            control = conn.execute(
+                """
+                SELECT run_id, payload FROM research_events
+                WHERE event_type = 'OfficialSearchControlRecorded'
+                AND event_hash = ?
+                """,
+                (payload["control_evidence_event_hash"],),
+            ).fetchone()
+            if control is None:
+                raise EventTransitionError("retriever v4 lacks prior official control")
+            control_payload = json.loads(str(control["payload"]))
+            if (
+                str(control["run_id"]) != draft.run_id
+                or control_payload["evidence_hash"] != payload["control_evidence_hash"]
+                or control_payload["policy_hash"] != payload["control_policy_hash"]
+                or control_payload["output_hash"] != payload["official_output_hash"]
+                or control_payload["data_snapshot_hash"] != payload["data_snapshot_hash"]
+            ):
+                raise EventTransitionError("retriever v4 official control binding differs")
             return
         if event_type == "OfficialSearchControlRecorded":
             prior = conn.execute(
@@ -2140,6 +2277,10 @@ class ResearchEventStore:
                 )
                 self._validate_artifacts(validated_payload)
                 self._validate_external_retriever_evidence(
+                    event.event_type,
+                    validated_payload,
+                )
+                self._validate_external_retriever_v4_evidence(
                     event.event_type,
                     validated_payload,
                 )

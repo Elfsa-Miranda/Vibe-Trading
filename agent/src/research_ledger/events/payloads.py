@@ -607,6 +607,31 @@ _PAYLOAD_SPECS: dict[str, PayloadSpec] = {
             "artifact_refs": _artifact_list,
         },
     ),
+    "RetrieverDecisionV4Recorded": PayloadSpec(
+        "retriever_decision_recorded.v4",
+        {
+            "decision_id": _string,
+            "decision_hash": _hash,
+            "shadow_decision_hash": _hash,
+            "input_bundle_hash": _hash,
+            "control_evidence_event_hash": _hash,
+            "control_evidence_hash": _hash,
+            "control_policy_hash": _hash,
+            "selected_factor_spec_ids": _string_list,
+            "seed": _integer,
+            "policy_version": _enum("topology_activation_policy.v3"),
+            "policy_hash": _hash,
+            "policy_config": _mapping,
+            "eligible_event_watermark": _hash,
+            "data_snapshot_hash": _hash,
+            "candidate_budget": _candidate_budget,
+            "official_output_hash": _hash,
+            "propensity_semantics": _enum("sequential_softmax_draw_probability.v1"),
+            "components": _retriever_component_list,
+            "shadow_only": _boolean,
+            "artifact_refs": _artifact_list,
+        },
+    ),
     "OfficialSearchControlRecorded": PayloadSpec(
         "official_search_control_recorded.v1",
         {
@@ -1208,6 +1233,51 @@ def _validate_cross_field_rules(event_type: str, payload: Mapping[str, Any]) -> 
         }
         if canonical_json_hash(decision_content) != payload["decision_hash"]:
             raise EventValidationError("retriever v3 source-bound decision hash is invalid")
+    if event_type == "RetrieverDecisionV4Recorded":
+        try:
+            from src.alpha_foundry.retrieval.policy import ActivationRetrieverPolicy
+
+            policy = ActivationRetrieverPolicy(**dict(payload["policy_config"]))
+        except (TypeError, ValueError) as exc:
+            raise EventValidationError("retriever v4 policy config is invalid") from exc
+        if (
+            policy.policy_hash != payload["policy_hash"]
+            or policy.policy_version != payload["policy_version"]
+            or not payload["shadow_only"]
+        ):
+            raise EventValidationError("retriever v4 policy or shadow state is invalid")
+        selected = [
+            component["factor_spec_id"]
+            for component in payload["components"] if component["selected"]
+        ]
+        if (
+            set(selected) != set(payload["selected_factor_spec_ids"])
+            or len(selected) != len(set(selected))
+            or len(selected) > payload["candidate_budget"]
+        ):
+            raise EventValidationError("retriever v4 selection is inconsistent")
+        decision_content = {
+            "schema_version": "retriever_source_bound_decision.v4",
+            "shadow_decision_hash": payload["shadow_decision_hash"],
+            "input_bundle_hash": payload["input_bundle_hash"],
+            "control_evidence_event_hash": payload["control_evidence_event_hash"],
+            "control_evidence_hash": payload["control_evidence_hash"],
+            "control_policy_hash": payload["control_policy_hash"],
+            "selected_factor_spec_ids": payload["selected_factor_spec_ids"],
+            "seed": payload["seed"],
+            "policy_version": payload["policy_version"],
+            "policy_hash": payload["policy_hash"],
+            "policy_config": payload["policy_config"],
+            "eligible_event_watermark": payload["eligible_event_watermark"],
+            "data_snapshot_hash": payload["data_snapshot_hash"],
+            "candidate_budget": payload["candidate_budget"],
+            "official_output_hash": payload["official_output_hash"],
+            "propensity_semantics": payload["propensity_semantics"],
+            "components": payload["components"],
+            "shadow_only": payload["shadow_only"],
+        }
+        if canonical_json_hash(decision_content) != payload["decision_hash"]:
+            raise EventValidationError("retriever v4 source-bound decision hash is invalid")
     if event_type == "ActivationRunRecorded":
         attempted = sum(int(value) for value in payload["terminal_status_counts"].values())
         if payload["complete"] and attempted == 0:
@@ -1512,7 +1582,10 @@ def envelope_diagnostics(
         warnings.add("REDUCED_DURABILITY")
     if event_type == "GenerationFailureRecorded":
         hard_failures.add(str(payload["failure_code"]))
-    if event_type in {"RetrieverDecisionV2Recorded", "RetrieverDecisionV3Recorded"}:
+    if event_type in {
+        "RetrieverDecisionV2Recorded", "RetrieverDecisionV3Recorded",
+        "RetrieverDecisionV4Recorded",
+    }:
         warnings.add("TOPOLOGY_RETRIEVER_SHADOW_ONLY")
     if event_type == "ActivationResultRecorded" and payload["invalidation_reasons"]:
         hard_failures |= {str(code) for code in payload["invalidation_reasons"]}

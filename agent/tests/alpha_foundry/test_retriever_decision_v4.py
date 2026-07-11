@@ -1,0 +1,122 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from src.alpha_foundry.control_evidence import OfficialSearchControlServiceV1
+from src.alpha_foundry.mutators import SeedMutator
+from src.alpha_foundry.retrieval.service_v4 import RetrieverDecisionV4Service
+from src.alpha_foundry.search import AlphaFoundrySearch
+from src.alpha_foundry.search_lifecycle import (
+    EventSourcedSearchLifecycle,
+    SearchEvaluationOutcome,
+)
+from src.alpha_foundry.seed_bank import AlphaSeed, SeedBank
+from src.research_ledger.events import EventDraft, EventValidationError
+from src.research_ledger.hash_utils import canonical_json_hash
+from test_retriever_shadow import _candidate, _views
+from test_search_lifecycle import _semantics
+
+
+class _SkipEvaluator:
+    def evaluate(self, **kwargs):
+        return SearchEvaluationOutcome(
+            status="skip",
+            decision="none",
+            reason_codes=("CONTROL_V4_FIXTURE",),
+        )
+
+
+def _record(tmp_path: Path):
+    store, query, discovery = _views(tmp_path)
+    run_id = "retriever-v4-run"
+    lifecycle = EventSourcedSearchLifecycle(
+        store=store,
+        flags=store.flags,
+        semantics=_semantics(),
+        evaluator=_SkipEvaluator(),
+        data_snapshot_hash=discovery.data_snapshot_hash,
+    )
+    search = AlphaFoundrySearch(
+        seed_bank=SeedBank([AlphaSeed("control-seed", "close", "registry")]),
+        mutator=SeedMutator(max_candidates_per_seed=3),
+        max_candidates=3,
+        trial_budget=3,
+        lifecycle=lifecycle,
+        run_id=run_id,
+    )
+    control = OfficialSearchControlServiceV1(store).record(search, search.generate())
+    candidate = _candidate(query, discovery)
+    recorded = RetrieverDecisionV4Service(store).record(
+        control_evidence_event_hash=control.event.event_hash,
+        candidates=(candidate,),
+        data_snapshot_hash=discovery.data_snapshot_hash,
+        seed=41,
+        candidate_budget=1,
+        run_id=run_id,
+    )
+    return store, discovery, control, candidate, recorded
+
+
+def test_v4_binds_replayed_control_event_and_topology_decision(tmp_path: Path) -> None:
+    store, _, control, candidate, recorded = _record(tmp_path)
+    assert recorded.event.event_type == "RetrieverDecisionV4Recorded"
+    assert recorded.event.payload["control_evidence_event_hash"] == control.event.event_hash
+    assert recorded.event.payload["control_policy_hash"] == control.evidence.policy.policy_hash
+    assert recorded.decision.official_output_hash == control.evidence.output_hash
+    assert recorded.decision.selected_factor_spec_ids == (candidate.factor_spec_id,)
+    assert store.verify_chain()
+
+
+def test_v4_accepts_no_caller_official_candidate_ids(tmp_path: Path) -> None:
+    store, query, discovery = _views(tmp_path)
+    with pytest.raises(TypeError):
+        RetrieverDecisionV4Service(store).record(  # type: ignore[call-arg]
+            control_evidence_event_hash=canonical_json_hash({"control": "missing"}),
+            official_candidate_ids=("caller",),
+            candidates=(_candidate(query, discovery),),
+            data_snapshot_hash=discovery.data_snapshot_hash,
+            seed=1,
+            candidate_budget=1,
+            run_id="caller-run",
+        )
+
+
+def test_rehashed_v4_control_binding_fabrication_is_rejected(tmp_path: Path) -> None:
+    store, _, _, _, recorded = _record(tmp_path)
+    payload = recorded.event.to_dict()["payload"]
+    payload["decision_id"] = "retriever-v4-forged"
+    payload["control_evidence_event_hash"] = canonical_json_hash(
+        {"forged": "control-event"}
+    )
+    payload["control_evidence_hash"] = canonical_json_hash(
+        {"forged": "control-evidence"}
+    )
+    content = {
+        "schema_version": "retriever_source_bound_decision.v4",
+        **{
+            key: value for key, value in payload.items()
+            if key not in {"decision_id", "decision_hash", "artifact_refs"}
+        },
+    }
+    payload["decision_hash"] = canonical_json_hash(content)
+    with pytest.raises(EventValidationError, match="deterministic rebuild|source evidence"):
+        store.append_event(
+            EventDraft(
+                event_type="RetrieverDecisionV4Recorded",
+                entity_id="retriever-v4-forged",
+                run_id="retriever-v4-run",
+                payload_schema_version="retriever_decision_recorded.v4",
+                payload=payload,
+                idempotency_key="retriever-v4:forged",
+            )
+        )
+
+
+def test_v4_bundle_tamper_breaks_chain(tmp_path: Path) -> None:
+    store, _, _, _, recorded = _record(tmp_path)
+    reference = recorded.event.payload["artifact_refs"][0]
+    target = store.artifact_root.joinpath(*str(reference["relative_path"]).split("/"))
+    target.write_text("{}\n", encoding="utf-8")
+    assert store.verify_chain() is False
