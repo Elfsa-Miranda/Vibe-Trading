@@ -90,6 +90,66 @@ class ActivationRunSourceAuditV2:
     def to_dict(self) -> dict[str, Any]:
         return {**self._content_dict(), "audit_hash": self.audit_hash}
 
+    @classmethod
+    def from_dict(cls, raw: Mapping[str, Any]) -> "ActivationRunSourceAuditV2":
+        expected = {
+            "schema_version", "plan_hash", "summary_manifest_hash",
+            "source_watermark_event_hash", "retriever_decision_event_hashes",
+            "terminal_event_hashes", "evaluation_event_hashes",
+            "quality_decision_event_hashes", "derived_terminal_status_counts",
+            "derived_candidate_ids", "derived_effective_candidate_ids",
+            "source_failure_codes", "source_complete", "audit_hash",
+        }
+        if set(raw) != expected:
+            raise ValueError("Activation run source audit has an invalid closed schema")
+        status_items = raw["derived_terminal_status_counts"]
+        if not isinstance(status_items, list) or any(
+            not isinstance(item, list) or len(item) != 2 for item in status_items
+        ):
+            raise ValueError("Activation run source terminal counts are invalid")
+        list_fields = (
+            "retriever_decision_event_hashes", "terminal_event_hashes",
+            "evaluation_event_hashes", "quality_decision_event_hashes",
+            "derived_candidate_ids", "derived_effective_candidate_ids",
+            "source_failure_codes",
+        )
+        if any(not isinstance(raw[name], list) for name in list_fields):
+            raise ValueError("Activation run source audit lists are invalid")
+        if not isinstance(raw["source_complete"], bool):
+            raise ValueError("Activation run source completeness must be boolean")
+        return cls(
+            schema_version=str(raw["schema_version"]),
+            plan_hash=str(raw["plan_hash"]),
+            summary_manifest_hash=str(raw["summary_manifest_hash"]),
+            source_watermark_event_hash=str(raw["source_watermark_event_hash"]),
+            retriever_decision_event_hashes=tuple(
+                str(item) for item in raw["retriever_decision_event_hashes"]
+            ),
+            terminal_event_hashes=tuple(
+                str(item) for item in raw["terminal_event_hashes"]
+            ),
+            evaluation_event_hashes=tuple(
+                str(item) for item in raw["evaluation_event_hashes"]
+            ),
+            quality_decision_event_hashes=tuple(
+                str(item) for item in raw["quality_decision_event_hashes"]
+            ),
+            derived_terminal_status_counts=tuple(
+                (str(item[0]), int(item[1])) for item in status_items
+            ),
+            derived_candidate_ids=tuple(
+                str(item) for item in raw["derived_candidate_ids"]
+            ),
+            derived_effective_candidate_ids=tuple(
+                str(item) for item in raw["derived_effective_candidate_ids"]
+            ),
+            source_failure_codes=tuple(
+                str(item) for item in raw["source_failure_codes"]
+            ),
+            source_complete=raw["source_complete"],
+            audit_hash=str(raw["audit_hash"]),
+        )
+
 
 class ActivationRunSourceAuditorV2:
     """Derive run provenance from a verified ledger; caller summaries are comparands."""

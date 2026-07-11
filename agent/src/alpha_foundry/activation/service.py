@@ -14,6 +14,10 @@ from src.alpha_foundry.activation.model import (
     RetrieverActivationDecision,
 )
 from src.alpha_foundry.activation.policy import RetrieverActivationPolicy
+from src.alpha_foundry.activation.run_source_v2 import (
+    ActivationRunSourceAuditV2,
+    ActivationRunSourceAuditorV2,
+)
 from src.research_ledger.events import EventDraft, ResearchEventStore
 
 
@@ -71,6 +75,55 @@ class ActivationEvidenceService:
             )
         )
         return relative
+
+    def record_run_source_audit(
+        self,
+        manifest: ActivationRunManifest,
+        *,
+        retriever_decision_event_hashes: tuple[str, ...],
+        terminal_event_hashes: tuple[str, ...],
+        evaluation_event_hashes: tuple[str, ...],
+        quality_decision_event_hashes: tuple[str, ...],
+    ) -> tuple[ActivationRunSourceAuditV2, str]:
+        audit = ActivationRunSourceAuditorV2(self.event_store).audit(
+            manifest,
+            retriever_decision_event_hashes=retriever_decision_event_hashes,
+            terminal_event_hashes=terminal_event_hashes,
+            evaluation_event_hashes=evaluation_event_hashes,
+            quality_decision_event_hashes=quality_decision_event_hashes,
+        )
+        relative = self.artifacts.put("run_source", audit.to_dict())
+        reference = self._reference("run_source", audit.audit_hash, relative)
+        reference["media_type"] = "application/vnd.vibe.activation-run-source-v2+json"
+        audit_id = "activation-source-v2-" + audit.audit_hash.removeprefix("sha256:")[:24]
+        self.event_store.append_event(
+            EventDraft(
+                event_type="ActivationRunSourceAudited",
+                entity_id=audit_id,
+                run_id=manifest.run_group_id,
+                payload_schema_version="activation_run_source_audited.v2",
+                idempotency_key="activation-run-source-v2:" + audit.audit_hash,
+                payload={
+                    "audit_id": audit_id,
+                    "plan_hash": audit.plan_hash,
+                    "summary_manifest_hash": audit.summary_manifest_hash,
+                    "source_watermark_event_hash": audit.source_watermark_event_hash,
+                    "audit_hash": audit.audit_hash,
+                    "retriever_decision_event_hashes": list(
+                        audit.retriever_decision_event_hashes
+                    ),
+                    "terminal_event_hashes": list(audit.terminal_event_hashes),
+                    "evaluation_event_hashes": list(audit.evaluation_event_hashes),
+                    "quality_decision_event_hashes": list(
+                        audit.quality_decision_event_hashes
+                    ),
+                    "source_failure_codes": list(audit.source_failure_codes),
+                    "source_complete": audit.source_complete,
+                    "artifact_refs": [reference],
+                },
+            )
+        )
+        return audit, relative
 
     def finalize(
         self,
