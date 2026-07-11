@@ -19,6 +19,7 @@ _SPECIALIZED_EVENT_TYPES = {
     "RegistryBootstrapRecordedV2",
     "ProcessActionFrozenV2",
     "ProcessOutcomeRecordedV2",
+    "RetrieverActionTemplateFrozen",
     "RetrieverDecisionV2Recorded",
     "RetrieverDecisionV3Recorded",
     "RetrieverDecisionV4Recorded",
