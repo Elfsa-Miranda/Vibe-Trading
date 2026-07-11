@@ -988,6 +988,10 @@ def test_every_registered_payload_schema_validates_a_complete_production_shape()
             },
         }
     )
+    retriever_v4["decision_id"] = (
+        "retriever-v4-"
+        + retriever_v4["decision_hash"].removeprefix("sha256:")[:20]
+    )
 
     for event_type, spec in PAYLOAD_SPECS.items():
         validated = validate_and_redact_payload(event_type, spec.version, samples[event_type])

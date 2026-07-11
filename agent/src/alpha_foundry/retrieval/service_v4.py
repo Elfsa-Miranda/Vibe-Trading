@@ -86,11 +86,12 @@ class RetrieverDecisionV4Service:
         eligible_event_watermark: str,
         seed: int,
         candidate_budget: int,
+        control_run_id: str,
         run_id: str,
     ) -> RecordedRetrieverDecisionV4:
         control_event, control = self._control_evidence(
             control_evidence_event_hash,
-            run_id=run_id,
+            run_id=control_run_id,
             data_snapshot_hash=data_snapshot_hash,
         )
         self._assert_pre_control_watermark(

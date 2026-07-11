@@ -1260,6 +1260,14 @@ def _validate_cross_field_rules(event_type: str, payload: Mapping[str, Any]) -> 
         if canonical_json_hash(decision_content) != payload["decision_hash"]:
             raise EventValidationError("retriever v3 source-bound decision hash is invalid")
     if event_type == "RetrieverDecisionV4Recorded":
+        expected_identifier = (
+            "retriever-v4-"
+            + str(payload["decision_hash"]).removeprefix("sha256:")[:20]
+        )
+        if payload["decision_id"] != expected_identifier:
+            raise EventValidationError(
+                "retriever v4 identity must derive from its decision hash"
+            )
         try:
             from src.alpha_foundry.retrieval.policy import ActivationRetrieverPolicy
 
