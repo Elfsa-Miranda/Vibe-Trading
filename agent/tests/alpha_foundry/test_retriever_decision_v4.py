@@ -15,6 +15,7 @@ from src.alpha_foundry.search_lifecycle import (
 from src.alpha_foundry.seed_bank import AlphaSeed, SeedBank
 from src.research_ledger.events import (
     EventDraft,
+    EventTransitionError,
     EventValidationError,
 )
 from src.research_ledger.hash_utils import canonical_json_hash
@@ -43,7 +44,8 @@ class _SuccessEvaluator:
 
 def _record(tmp_path: Path):
     store, query, discovery = _views(tmp_path)
-    run_id = "retriever-v4-run"
+    control_run_id = "retriever-v4-control-run"
+    decision_run_id = "retriever-v4-treatment-run"
     lifecycle = EventSourcedSearchLifecycle(
         store=store,
         flags=store.flags,
@@ -57,7 +59,7 @@ def _record(tmp_path: Path):
         max_candidates=3,
         trial_budget=3,
         lifecycle=lifecycle,
-        run_id=run_id,
+        run_id=control_run_id,
     )
     control = OfficialSearchControlServiceV1(store).record(search, search.generate())
     candidate = _candidate(query, discovery)
@@ -68,7 +70,8 @@ def _record(tmp_path: Path):
         eligible_event_watermark=discovery.source_watermark,
         seed=41,
         candidate_budget=1,
-        run_id=run_id,
+        control_run_id=control_run_id,
+        run_id=decision_run_id,
     )
     return store, discovery, control, candidate, recorded
 
@@ -81,6 +84,8 @@ def test_v4_binds_replayed_control_event_and_topology_decision(tmp_path: Path) -
     assert recorded.decision.official_output_hash == control.evidence.output_hash
     assert recorded.decision.selected_factor_spec_ids == (candidate.factor_spec_id,)
     assert recorded.decision.eligible_event_watermark == discovery.source_watermark
+    assert control.event.run_id == "retriever-v4-control-run"
+    assert recorded.event.run_id == "retriever-v4-treatment-run"
     assert store.verify_chain()
 
 
@@ -120,6 +125,7 @@ def test_v4_rejects_watermark_that_contains_same_pair_control_outcomes(
             eligible_event_watermark=leaked_watermark,
             seed=41,
             candidate_budget=1,
+            control_run_id=run_id,
             run_id=run_id,
         )
 
@@ -169,7 +175,10 @@ def test_rehashed_v4_control_binding_fabrication_is_rejected(tmp_path: Path) -> 
         },
     }
     payload["decision_hash"] = canonical_json_hash(content)
-    with pytest.raises(EventValidationError, match="deterministic rebuild|source evidence"):
+    with pytest.raises(
+        EventValidationError,
+        match="identity must derive|deterministic rebuild|source evidence",
+    ):
         store.append_event(
             EventDraft(
                 event_type="RetrieverDecisionV4Recorded",
@@ -178,6 +187,24 @@ def test_rehashed_v4_control_binding_fabrication_is_rejected(tmp_path: Path) -> 
                 payload_schema_version="retriever_decision_recorded.v4",
                 payload=payload,
                 idempotency_key="retriever-v4:forged",
+            )
+        )
+
+
+def test_v4_decision_cannot_be_reenveloped_under_another_arm_run(
+    tmp_path: Path,
+) -> None:
+    store, _, _, _, recorded = _record(tmp_path)
+    payload = recorded.event.to_dict()["payload"]
+    with pytest.raises(EventTransitionError, match="identity already exists"):
+        store.append_event(
+            EventDraft(
+                event_type="RetrieverDecisionV4Recorded",
+                entity_id=payload["decision_id"],
+                run_id="forged-other-arm-run",
+                payload_schema_version="retriever_decision_recorded.v4",
+                payload=payload,
+                idempotency_key="retriever-v4:forged-other-arm-run",
             )
         )
 

@@ -1196,6 +1196,18 @@ class ResearchEventStore:
             return
         if event_type == "RetrieverDecisionV4Recorded":
             self._validate_retriever_v2_transition(conn, payload)
+            prior = conn.execute(
+                """
+                SELECT 1 FROM research_events
+                WHERE event_type = 'RetrieverDecisionV4Recorded'
+                  AND entity_id = ?
+                """,
+                (payload["decision_id"],),
+            ).fetchone()
+            if prior is not None:
+                raise EventTransitionError(
+                    "retriever v4 decision identity already exists"
+                )
             control = conn.execute(
                 """
                 SELECT seq, run_id, payload FROM research_events
@@ -1240,8 +1252,7 @@ class ResearchEventStore:
                     "retriever v4 discovery watermark includes control-arm outcomes"
                 )
             if (
-                str(control["run_id"]) != draft.run_id
-                or control_payload["evidence_hash"] != payload["control_evidence_hash"]
+                control_payload["evidence_hash"] != payload["control_evidence_hash"]
                 or control_payload["policy_hash"] != payload["control_policy_hash"]
                 or control_payload["output_hash"] != payload["official_output_hash"]
                 or control_payload["data_snapshot_hash"] != payload["data_snapshot_hash"]
