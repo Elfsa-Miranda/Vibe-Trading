@@ -28,6 +28,8 @@ from src.research_ledger.events.model import (
     ReplayState,
     ResearchEventAppendError,
     ResearchEventEnvelope,
+    VerifiedEventSubsequence,
+    _issue_verified_event_subsequence,
 )
 from src.research_ledger.events.payloads import (
     envelope_diagnostics,
@@ -775,6 +777,21 @@ class ResearchEventStore:
             ).fetchone()
             if plan is None:
                 raise EventTransitionError("forward observation has no prior plan")
+            return
+        if event_type == "GenerationFailureRecorded":
+            trial_id = str(payload["trial_id"])
+            started = conn.execute(
+                "SELECT 1 FROM research_events WHERE event_type = 'TrialStarted' AND entity_id = ?",
+                (trial_id,),
+            ).fetchone()
+            terminal = conn.execute(
+                "SELECT 1 FROM research_events WHERE event_type = 'TrialTerminated' AND entity_id = ?",
+                (trial_id,),
+            ).fetchone()
+            if started is None or terminal is not None:
+                raise EventTransitionError(
+                    "generation failure requires a prior active trial"
+                )
             return
         if event_type not in {"TrialStarted", "EvaluationRecorded", "TrialTerminated"}:
             return
@@ -1732,6 +1749,10 @@ class ResearchEventStore:
                 if trial_id in started or trial_id in terminated:
                     return False
                 started.add(trial_id)
+            elif event.event_type == "GenerationFailureRecorded":
+                trial_id = str(payload["trial_id"])
+                if trial_id not in started or trial_id in terminated:
+                    return False
             elif event.event_type == "EvaluationRecorded":
                 trial_id = str(payload["trial_id"])
                 if trial_id not in started or trial_id in terminated:
@@ -2100,6 +2121,40 @@ class ResearchEventStore:
             terminal_count=len(terminal_by_trial),
             open_trial_ids=tuple(sorted(started - set(terminal_by_trial))),
             terminal_status_counts=tuple(sorted(Counter(terminal_by_trial.values()).items())),
+        )
+
+    def _verified_subsequence(
+        self,
+        selected: list[ResearchEventEnvelope] | tuple[ResearchEventEnvelope, ...],
+    ) -> VerifiedEventSubsequence:
+        """Bind an exact ordered subset to a verified full event chain."""
+
+        full = self.query_events()
+        if not full or not self._verify_events(full):
+            raise ResearchEventAppendError(
+                "cannot issue an event subsequence from an empty or invalid chain"
+            )
+        by_hash = {event.event_hash: (index, event) for index, event in enumerate(full)}
+        prior_index = -1
+        normalized: list[ResearchEventEnvelope] = []
+        seen: set[str] = set()
+        for event in selected:
+            source = by_hash.get(event.event_hash)
+            if source is None or source[0] <= prior_index or event.event_hash in seen:
+                raise EventValidationError(
+                    "selected events are not a unique ordered full-chain subsequence"
+                )
+            if source[1].to_dict() != event.to_dict():
+                raise EventValidationError("selected event differs from its full-chain source")
+            prior_index = source[0]
+            seen.add(event.event_hash)
+            normalized.append(source[1])
+        replay = build_replay_state(full)
+        return _issue_verified_event_subsequence(
+            events=tuple(normalized),
+            full_event_count=len(full),
+            full_chain_head=full[-1].event_hash,
+            full_replay_hash=replay.projection_hash,
         )
 
     def update(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
