@@ -10,6 +10,7 @@ from src.alpha_foundry.activation import (
     ActivationEvidenceService,
     ActivationRunManifest,
     ActivationRunSourceAuditorV2,
+    activation_arm_execution_run_id,
 )
 from src.research_ledger.events import EventDraft
 from src.research_ledger.events import EventValidationError
@@ -125,13 +126,18 @@ def test_terminal_counts_and_candidate_ids_rebuild_from_chain(tmp_path: Path) ->
         complete=True,
     )
     terminal_hashes: list[str] = []
+    execution_run_id = activation_arm_execution_run_id(
+        plan_hash=frozen.plan_hash,
+        run_group_id="group-00",
+        arm="treatment",
+    )
     for index, candidate_id in enumerate(candidate_ids):
         trial_id = f"source-trial-{index}"
         store.append_event(
             EventDraft(
                 event_type="TrialStarted",
                 entity_id=trial_id,
-                run_id="group-00",
+                run_id=execution_run_id,
                 payload_schema_version="trial_started.v1",
                 payload={
                     "trial_id": trial_id,
@@ -147,7 +153,7 @@ def test_terminal_counts_and_candidate_ids_rebuild_from_chain(tmp_path: Path) ->
                 EventDraft(
                     event_type="TrialTerminated",
                     entity_id=trial_id,
-                    run_id="group-00",
+                    run_id=execution_run_id,
                     payload_schema_version="trial_terminated.v1",
                     payload={
                         "trial_id": trial_id,
@@ -172,6 +178,57 @@ def test_terminal_counts_and_candidate_ids_rebuild_from_chain(tmp_path: Path) ->
     assert "TERMINAL_STATUS_SUMMARY_MISMATCH" not in audit.source_failure_codes
     assert "CANDIDATE_ID_SUMMARY_MISMATCH" not in audit.source_failure_codes
     assert audit.source_complete is False
+
+
+def test_shared_run_group_trial_namespace_is_rejected_as_cross_arm_unsafe(
+    tmp_path: Path,
+) -> None:
+    frozen = plan()
+    store = event_store(tmp_path)
+    ActivationEvidenceService(store).register_plan(frozen)
+    summary = manifest(frozen, "group-00", "treatment")
+    trial_id = "shared-run-group-trial"
+    store.append_event(
+        EventDraft(
+            event_type="TrialStarted",
+            entity_id=trial_id,
+            run_id=summary.run_group_id,
+            payload_schema_version="trial_started.v1",
+            payload={
+                "trial_id": trial_id,
+                "candidate_id": summary.candidate_ids[0],
+                "data_scope": "train_valid",
+                "objective": "activation-source-v2",
+                "started_at": "2026-07-11T00:00:00Z",
+            },
+        )
+    )
+    terminal = store.append_event(
+        EventDraft(
+            event_type="TrialTerminated",
+            entity_id=trial_id,
+            run_id=summary.run_group_id,
+            payload_schema_version="trial_terminated.v1",
+            payload={
+                "trial_id": trial_id,
+                "status": "duplicate",
+                "reason_codes": ["DUPLICATE_IDENTITY"],
+                "decision": "reject",
+                "evaluation_event_hash": None,
+                "terminated_at": "2026-07-11T00:00:01Z",
+            },
+        )
+    )
+    audit = ActivationRunSourceAuditorV2(store).audit(
+        summary,
+        retriever_decision_event_hashes=(),
+        terminal_event_hashes=(terminal.event_hash,),
+        evaluation_event_hashes=(),
+        quality_decision_event_hashes=(),
+    )
+    assert "TERMINAL_RUN_OR_DUPLICATE_TRIAL_MISMATCH" in audit.source_failure_codes
+    assert "CANDIDATE_ID_SUMMARY_MISMATCH" in audit.source_failure_codes
+    assert audit.derived_candidate_ids == ()
 
 
 def test_source_audit_is_content_addressed_append_only_and_replayable(

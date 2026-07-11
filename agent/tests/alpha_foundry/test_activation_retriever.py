@@ -20,6 +20,7 @@ from src.alpha_foundry.activation import (
     ActivationEvidenceService,
     PairedActivationRunner,
     RetrieverActivationPolicy,
+    activation_arm_execution_run_id,
     holm_adjust,
 )
 from src.alpha_quality.flags import AGS_FLAG_DEFAULTS, ResolvedAGSFlags
@@ -232,8 +233,11 @@ def test_runner_freezes_pair_and_isolates_namespaces(tmp_path: Path) -> None:
     runner = PairedActivationRunner(ActivationArtifactStore(tmp_path))
     registered = runner.register(frozen)
 
+    requests = []
+
     def execute(request, scope):
         assert scope.discovery_chain_head == frozen.provenance.eligible_event_chain_head
+        requests.append(request)
         return manifest(frozen, request.run_group_id, request.arm)
 
     control, treatment = runner.run_pair(
@@ -246,6 +250,22 @@ def test_runner_freezes_pair_and_isolates_namespaces(tmp_path: Path) -> None:
     assert control.seed == treatment.seed
     assert control.rng_namespace != treatment.rng_namespace
     assert control.cache_namespace != treatment.cache_namespace
+    execution_run_ids = [request.execution_run_id for request in requests]
+    assert len(set(execution_run_ids)) == 2
+    assert execution_run_ids == [
+        activation_arm_execution_run_id(
+            plan_hash=frozen.plan_hash,
+            run_group_id="group-00",
+            arm="control",
+        ),
+        activation_arm_execution_run_id(
+            plan_hash=frozen.plan_hash,
+            run_group_id="group-00",
+            arm="treatment",
+        ),
+    ]
+    with pytest.raises(ValueError, match="not runner-derived"):
+        replace(requests[0], execution_run_id="activation-arm-forged")
     assert sum(control.terminal_status_counts.values()) == len(control.candidate_ids)
 
 
