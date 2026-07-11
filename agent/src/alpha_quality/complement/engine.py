@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping, Sequence
+from typing import Literal, Mapping, Sequence
 
 import pandas as pd
 
@@ -21,6 +21,7 @@ from src.research_ledger.hash_utils import canonical_json_hash
 @dataclass(frozen=True)
 class ComplementInputs:
     snapshot_hash: str
+    data_scope: Literal["train_valid", "valid"]
     candidate_identity: FactorIdentityRecord
     existing_identities: Sequence[FactorIdentityRecord]
     candidate_panel: pd.DataFrame | None
@@ -42,6 +43,10 @@ class ComplementInputs:
     structural_similarity: float | None = None
     polarity_control: bool = False
 
+    def __post_init__(self) -> None:
+        if self.data_scope not in {"train_valid", "valid"}:
+            raise ValueError("complement inputs are train/valid only")
+
 
 class ComplementEngine:
     def __init__(self, *, flags: ResolvedAGSFlags, policy: ComplementPolicy) -> None:
@@ -50,6 +55,8 @@ class ComplementEngine:
         self.policy = policy
 
     def evaluate(self, inputs: ComplementInputs) -> ComplementEvidenceV2:
+        if inputs.data_scope != self.policy.data_scope:
+            raise ValueError("complement input scope does not match frozen policy")
         identity = build_duplicate_identity_evidence(
             inputs.candidate_identity,
             inputs.existing_identities,
@@ -140,7 +147,7 @@ class ComplementEngine:
         content: dict[str, object] = {
             "schema_version": "complement_evidence.v2",
             "factor_spec_id": inputs.candidate_identity.factor_spec_id,
-            "data_scope": self.policy.data_scope,
+            "data_scope": inputs.data_scope,
             "snapshot_hash": inputs.snapshot_hash,
             "policy_version": self.policy.policy_version,
             "policy_hash": self.policy.policy_hash,
@@ -158,7 +165,7 @@ class ComplementEngine:
         return ComplementEvidenceV2(
             schema_version="complement_evidence.v2",
             factor_spec_id=inputs.candidate_identity.factor_spec_id,
-            data_scope=self.policy.data_scope,
+            data_scope=inputs.data_scope,
             snapshot_hash=inputs.snapshot_hash,
             policy_version=self.policy.policy_version,
             policy_hash=self.policy.policy_hash,

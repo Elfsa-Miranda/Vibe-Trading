@@ -115,6 +115,7 @@ def _complete_inputs(**changes: object) -> ComplementInputs:
     )
     values: dict[str, object] = {
         "snapshot_hash": _hash("snapshot"),
+        "data_scope": "valid",
         "candidate_identity": _identity("candidate"),
         "existing_identities": (_identity("reference"), _identity("collinear")),
         "candidate_panel": candidate,
@@ -460,3 +461,15 @@ def test_complement_service_feature_off_creates_no_artifact_or_event(
 
     assert len(store.query_events()) == before
     assert not (tmp_path / "artifacts" / "complement_v2").exists()
+
+
+def test_complement_calculator_rejects_final_period_data_provider() -> None:
+    with pytest.raises(ValueError, match="train/valid only"):
+        replace(_complete_inputs(), data_scope="test")  # type: ignore[arg-type]
+
+
+def test_portfolio_marginal_value_uses_only_train_valid_outputs() -> None:
+    engine = ComplementEngine(flags=_flags(), policy=_policy(data_scope="valid"))
+
+    with pytest.raises(ValueError, match="frozen policy"):
+        engine.evaluate(replace(_complete_inputs(), data_scope="train_valid"))

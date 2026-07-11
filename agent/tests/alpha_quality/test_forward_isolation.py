@@ -412,6 +412,8 @@ def test_final_and_forward_artifacts_feed_decision_v2_only_through_views(
             "complete": True,
             "terminal_train_valid": True,
             "reduced_durability": False,
+            "ledger_schema_version": "decision_ledger_evidence.v2",
+            "infrastructure_failure_event_hashes": [],
             "limitations": [],
         },
     )

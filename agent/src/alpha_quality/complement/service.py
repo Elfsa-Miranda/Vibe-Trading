@@ -49,10 +49,12 @@ class ComplementEvidenceService:
     ) -> RecordedComplementEvidence:
         self._validate_sources(
             factor_spec_id=inputs.candidate_identity.factor_spec_id,
-            data_scope=self.policy.data_scope,
+            data_scope=inputs.data_scope,
             evaluation_event_hash=source_evaluation_event_hash,
             terminal_event_hash=source_terminal_event_hash,
         )
+        if inputs.data_scope != self.policy.data_scope:
+            raise ValueError("complement inputs do not match the frozen policy scope")
         evidence = self._engine.evaluate(inputs)
         artifact = {
             "schema_version": "complement_evidence_artifact.v2",
