@@ -20,6 +20,7 @@ from src.alpha_foundry.activation import (
     ActivationEvidenceService,
     PairedActivationRunner,
     RetrieverActivationPolicy,
+    RetrieverModeResolution,
     activation_arm_execution_run_id,
     holm_adjust,
 )
@@ -384,6 +385,21 @@ def test_active_flag_without_approved_artifacts_falls_back_to_shadow(tmp_path: P
         decision_hash=None, compatibility=compatibility,
     )
     assert resolution.mode == "shadow"
+
+
+def test_synthetic_approved_resolution_cannot_inject_caller_topology_ids() -> None:
+    capability = ActiveRetrieverCapability(
+        RetrieverModeResolution(
+            "active_research_only",
+            "APPROVED_COMPATIBLE",
+            h("synthetic-decision"),
+        )
+    )
+    with pytest.raises(RuntimeError, match="generator-consumption evidence"):
+        capability.choose(
+            flat_candidate_ids=("flat-official",),
+            topology_candidate_ids=("caller-arbitrary-factor",),
+        )
 
 
 def test_v1_self_reported_approval_cannot_enable_research_mode(tmp_path: Path) -> None:

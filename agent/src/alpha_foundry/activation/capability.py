@@ -42,9 +42,10 @@ class ActiveRetrieverCapability:
         flat_candidate_ids: tuple[str, ...],
         topology_candidate_ids: tuple[str, ...],
     ) -> tuple[str, ...]:
-        if len(topology_candidate_ids) != len(set(topology_candidate_ids)):
-            raise ValueError("topology candidates must be unique")
-        return topology_candidate_ids
+        del flat_candidate_ids, topology_candidate_ids
+        raise RuntimeError(
+            "source-bound topology generator-consumption evidence is required"
+        )
 
 
 class ActiveRetrieverResolver:
@@ -127,6 +128,11 @@ class ActiveRetrieverResolver:
         source_failure = self._source_evidence_failure(result, evidence)
         if source_failure is not None:
             return RetrieverModeResolution("shadow", source_failure, decision_hash)
+        consumption_failure = self._generation_consumption_failure(result, evidence)
+        if consumption_failure is not None:
+            return RetrieverModeResolution(
+                "shadow", consumption_failure, decision_hash
+            )
         if not self._approval_replays(plan, result, decision):
             return RetrieverModeResolution("shadow", "ACTIVATION_DECISION_REPLAY_FAILED", decision_hash)
         provenance = plan.get("provenance")
@@ -227,6 +233,37 @@ class ActiveRetrieverResolver:
             for event in audits + resources
         ):
             return "ACTIVATION_RUN_SOURCE_INCOMPLETE"
+        return None
+
+    @staticmethod
+    def _generation_consumption_failure(
+        result: Mapping[str, object],
+        events: list[ResearchEventEnvelope],
+    ) -> str | None:
+        references = result.get("generation_consumption_event_hashes")
+        if (
+            not isinstance(references, list)
+            or not references
+            or any(not isinstance(item, str) for item in references)
+            or len(references) != len(set(references))
+        ):
+            return "ACTIVATION_GENERATOR_CONSUMPTION_EVIDENCE_MISSING"
+        by_hash = {event.event_hash: event for event in events}
+        sources = [by_hash.get(str(event_hash)) for event_hash in references]
+        if any(
+            event is None
+            or event.event_type != "ActivationGenerationConsumptionRecorded"
+            or event.payload.get("plan_hash") != result.get("plan_hash")
+            for event in sources
+        ):
+            return "ACTIVATION_GENERATOR_CONSUMPTION_EVIDENCE_MISSING"
+        if any(
+            event is None
+            or event.payload.get("source_complete") is not True
+            or bool(event.payload.get("source_failure_codes"))
+            for event in sources
+        ):
+            return "ACTIVATION_GENERATOR_CONSUMPTION_EVIDENCE_INCOMPLETE"
         return None
 
     @staticmethod
