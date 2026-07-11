@@ -572,6 +572,33 @@ _PAYLOAD_SPECS: dict[str, PayloadSpec] = {
             "veto_reason": _nullable_string,
         },
     ),
+    "RetrieverActionTemplateFrozen": PayloadSpec(
+        "retriever_action_template_frozen.v1",
+        {
+            "action_id": _string,
+            "action_hash": _hash,
+            "schema_version": _enum("frozen_retriever_action_template.v1"),
+            "execution_run_id": _string,
+            "parent_factor_spec_id": _string,
+            "parent_definition_event_hash": _hash,
+            "eligible_event_watermark": _hash,
+            "data_snapshot_hash": _hash,
+            "retrieval_policy_hash": _hash,
+            "template_registry_hash": _hash,
+            "template_id": _enum(
+                "identity", "rank_wrap", "decay_3", "delay_1", "zscore_wrap"
+            ),
+            "expected_formula": _string,
+            "expected_formula_hash": _hash,
+            "expected_candidate_id": _string,
+            "expected_expression_id": _hash,
+            "expected_canonical_ast_hash": _hash,
+            "expected_ast_diff_hash": _nullable_hash,
+            "expected_motif_version": _nullable_string,
+            "expected_motif": _nullable_string,
+            "identity_action": _boolean,
+        },
+    ),
     "RetrieverDecisionV2Recorded": PayloadSpec(
         "retriever_decision_recorded.v2",
         {

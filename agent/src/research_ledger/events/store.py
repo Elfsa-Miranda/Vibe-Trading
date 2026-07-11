@@ -63,6 +63,10 @@ _EVENT_CAPABILITY_REQUIREMENTS: Mapping[str, tuple[str, ...]] = {
         "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
         "VIBE_TRADING_PROCESS_MEMORY", "VIBE_TRADING_TOPOLOGY_RETRIEVER",
     ),
+    "RetrieverActionTemplateFrozen": (
+        "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
+        "VIBE_TRADING_PROCESS_MEMORY", "VIBE_TRADING_TOPOLOGY_RETRIEVER",
+    ),
     "RetrieverDecisionV3Recorded": (
         "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
         "VIBE_TRADING_PROCESS_MEMORY", "VIBE_TRADING_TOPOLOGY_RETRIEVER",
@@ -292,6 +296,9 @@ class ResearchEventStore:
         self._validate_payload_entity(draft, payload)
         self._validate_artifacts(payload)
         self._validate_external_process_evidence(draft.event_type, payload)
+        self._validate_external_retriever_action_template(
+            draft.event_type, payload
+        )
         self._validate_external_retriever_evidence(draft.event_type, payload)
         self._validate_external_retriever_v4_evidence(draft.event_type, payload)
         self._validate_external_quality_decision_evidence(draft.event_type, payload)
@@ -508,6 +515,7 @@ class ResearchEventStore:
             "EvaluationRecorded": "evaluation_id",
             "TrialTerminated": "trial_id",
             "RetrieverDecisionRecorded": "decision_id",
+            "RetrieverActionTemplateFrozen": "action_id",
             "RetrieverDecisionV2Recorded": "decision_id",
             "RetrieverDecisionV3Recorded": "decision_id",
             "RetrieverDecisionV4Recorded": "decision_id",
@@ -595,6 +603,51 @@ class ResearchEventStore:
             raise EventValidationError("process outcome v2 scorecard evidence is invalid") from exc
         if utility != float(payload["observed_validation_utility"]):
             raise EventValidationError("process outcome v2 utility was not deterministically rebuilt")
+
+    def _validate_external_retriever_action_template(
+        self,
+        event_type: str,
+        payload: Mapping[str, Any],
+    ) -> None:
+        """Rebuild the proposed edit from the authoritative parent definition."""
+        if event_type != "RetrieverActionTemplateFrozen":
+            return
+        definitions = [
+            event
+            for event in self.query_events(
+                event_type="FactorDefinitionRecorded",
+                entity_id=str(payload["parent_factor_spec_id"]),
+            )
+            if event.event_hash == payload["parent_definition_event_hash"]
+        ]
+        if len(definitions) != 1:
+            raise EventValidationError(
+                "Retriever action lacks its authoritative parent definition"
+            )
+        try:
+            from src.alpha_foundry.retrieval.action_template_v1 import (
+                FrozenRetrieverActionTemplateV1,
+            )
+
+            rebuilt = FrozenRetrieverActionTemplateV1.build(
+                execution_run_id=str(payload["execution_run_id"]),
+                parent_definition=definitions[0].payload,
+                parent_definition_event_hash=str(
+                    payload["parent_definition_event_hash"]
+                ),
+                eligible_event_watermark=str(payload["eligible_event_watermark"]),
+                data_snapshot_hash=str(payload["data_snapshot_hash"]),
+                retrieval_policy_hash=str(payload["retrieval_policy_hash"]),
+                template_id=str(payload["template_id"]),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise EventValidationError(
+                "Retriever action template cannot be deterministically rebuilt"
+            ) from exc
+        if rebuilt.to_dict() != dict(payload):
+            raise EventValidationError(
+                "Retriever action differs from its deterministic template rebuild"
+            )
 
     def _validate_external_retriever_evidence(
         self,
@@ -1424,6 +1477,11 @@ class ResearchEventStore:
         if event_type == "ProcessOutcomeRecordedV2":
             self._validate_process_outcome_v2_transition(conn, draft, payload)
             return
+        if event_type == "RetrieverActionTemplateFrozen":
+            self._validate_retriever_action_template_transition(
+                conn, draft, payload
+            )
+            return
         if event_type == "RetrieverDecisionV2Recorded":
             self._validate_retriever_v2_transition(conn, payload)
             return
@@ -1862,6 +1920,51 @@ class ResearchEventStore:
             or canonical_json_hash(diff.to_dict()) != payload["ast_diff_hash"]
         ):
             raise EventTransitionError("process outcome v2 AST identity binding is mismatched")
+
+    @staticmethod
+    def _validate_retriever_action_template_transition(
+        conn: sqlite3.Connection,
+        draft: EventDraft,
+        payload: Mapping[str, Any],
+    ) -> None:
+        if draft.run_id != payload["execution_run_id"]:
+            raise EventTransitionError(
+                "Retriever action envelope run differs from its execution run"
+            )
+        existing = conn.execute(
+            """
+            SELECT 1 FROM research_events
+            WHERE event_type = 'RetrieverActionTemplateFrozen' AND entity_id = ?
+            """,
+            (payload["action_id"],),
+        ).fetchone()
+        if existing is not None:
+            raise EventTransitionError("Retriever action identity already exists")
+        definition = conn.execute(
+            """
+            SELECT seq, event_hash FROM research_events
+            WHERE event_type = 'FactorDefinitionRecorded' AND entity_id = ?
+            ORDER BY seq ASC LIMIT 1
+            """,
+            (payload["parent_factor_spec_id"],),
+        ).fetchone()
+        if (
+            definition is None
+            or str(definition["event_hash"])
+            != payload["parent_definition_event_hash"]
+        ):
+            raise EventTransitionError(
+                "Retriever action parent definition hash differs"
+            )
+        ResearchEventStore._validate_retriever_v2_transition(
+            conn,
+            {
+                "eligible_event_watermark": payload["eligible_event_watermark"],
+                "components": [
+                    {"factor_spec_id": payload["parent_factor_spec_id"]}
+                ],
+            },
+        )
 
     @staticmethod
     def _validate_retriever_v2_transition(
@@ -2727,6 +2830,10 @@ class ResearchEventStore:
                     event_dict["payload"],
                 )
                 self._validate_artifacts(validated_payload)
+                self._validate_external_retriever_action_template(
+                    event.event_type,
+                    validated_payload,
+                )
                 self._validate_external_retriever_evidence(
                     event.event_type,
                     validated_payload,
@@ -2842,10 +2949,15 @@ class ResearchEventStore:
         activation_generation_ids: set[str] = set()
         activation_generation_hashes: set[str] = set()
         official_control_ids: set[str] = set()
+        retriever_action_ids: set[str] = set()
+        process_outcome_links: list[tuple[str, str, str]] = []
         retriever_v4_events: dict[str, ResearchEventEnvelope] = {}
         activation_results: dict[str, Mapping[str, Any]] = {}
         activation_result_plans: set[str] = set()
         activation_decision_plans: set[str] = set()
+        event_order = {
+            event.event_hash: index for index, event in enumerate(events)
+        }
         for event in events:
             payload = event.payload
             if event.event_type == "RetrieverDecisionV4Recorded":
@@ -2885,6 +2997,68 @@ class ResearchEventStore:
                 terminated.add(trial_id)
                 terminal_hashes.add(event.event_hash)
                 terminal_payloads[event.event_hash] = payload
+            elif event.event_type == "ProcessOutcomeRecordedV2":
+                process_outcome_links.append(
+                    (
+                        event.event_hash,
+                        str(payload["terminal_event_hash"]),
+                        str(payload["evaluation_event_hash"]),
+                    )
+                )
+            elif event.event_type == "RetrieverActionTemplateFrozen":
+                action_id = str(payload["action_id"])
+                watermark_hash = str(payload["eligible_event_watermark"])
+                watermark_index = event_order.get(watermark_hash, -1)
+                current_index = event_order[event.event_hash]
+                factor_id = str(payload["parent_factor_spec_id"])
+                definition_hash = definition_event_hashes.get(factor_id)
+                if (
+                    action_id in retriever_action_ids
+                    or event.run_id != payload["execution_run_id"]
+                    or watermark_index < 0
+                    or watermark_index >= current_index
+                    or definition_hash != payload["parent_definition_event_hash"]
+                    or event_order.get(str(definition_hash), current_index)
+                    > watermark_index
+                ):
+                    return False
+                eligible = False
+                for evaluation_hash, candidate_evaluation in evaluation_payloads.items():
+                    if (
+                        event_order[evaluation_hash] > watermark_index
+                        or candidate_evaluation["factor_spec_id"] != factor_id
+                        or candidate_evaluation["data_scope"]
+                        not in {"valid", "train_valid"}
+                    ):
+                        continue
+                    for terminal_hash, candidate_terminal in terminal_payloads.items():
+                        if (
+                            event_order[terminal_hash] > watermark_index
+                            or candidate_terminal["trial_id"]
+                            != candidate_evaluation["trial_id"]
+                            or candidate_terminal["status"]
+                            not in {"success", "reject"}
+                        ):
+                            continue
+                        directly_cited = (
+                            candidate_terminal["evaluation_event_hash"]
+                            == evaluation_hash
+                        )
+                        outcome_cited = any(
+                            event_order[outcome_hash] <= watermark_index
+                            and cited_terminal == terminal_hash
+                            and cited_evaluation == evaluation_hash
+                            for outcome_hash, cited_terminal, cited_evaluation
+                            in process_outcome_links
+                        )
+                        if directly_cited or outcome_cited:
+                            eligible = True
+                            break
+                    if eligible:
+                        break
+                if not eligible:
+                    return False
+                retriever_action_ids.add(action_id)
             elif event.event_type == "DerivationRecorded":
                 terminal = terminal_payloads.get(str(payload["trial_terminal_event_hash"]))
                 definition = definitions.get(str(payload["child_factor_spec_id"]))
