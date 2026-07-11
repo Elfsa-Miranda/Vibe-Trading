@@ -63,6 +63,10 @@ _EVENT_CAPABILITY_REQUIREMENTS: Mapping[str, tuple[str, ...]] = {
         "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
         "VIBE_TRADING_PROCESS_MEMORY", "VIBE_TRADING_TOPOLOGY_RETRIEVER",
     ),
+    "RetrieverDecisionV3Recorded": (
+        "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
+        "VIBE_TRADING_PROCESS_MEMORY", "VIBE_TRADING_TOPOLOGY_RETRIEVER",
+    ),
     "ActivationPlanRegistered": (
         "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
         "VIBE_TRADING_PROCESS_MEMORY", "VIBE_TRADING_TOPOLOGY_RETRIEVER",
@@ -268,6 +272,7 @@ class ResearchEventStore:
         self._validate_payload_entity(draft, payload)
         self._validate_artifacts(payload)
         self._validate_external_process_evidence(draft.event_type, payload)
+        self._validate_external_retriever_evidence(draft.event_type, payload)
         self._validate_factor_definition_identity(draft.event_type, payload)
         self._validate_registry_bootstrap_identity(draft.event_type, payload)
         payload_hash = canonical_json_hash(payload)
@@ -478,6 +483,7 @@ class ResearchEventStore:
             "TrialTerminated": "trial_id",
             "RetrieverDecisionRecorded": "decision_id",
             "RetrieverDecisionV2Recorded": "decision_id",
+            "RetrieverDecisionV3Recorded": "decision_id",
             "ActivationPlanRegistered": "experiment_id",
             "ActivationRunRecorded": "manifest_id",
             "ActivationResultRecorded": "result_id",
@@ -557,6 +563,83 @@ class ResearchEventStore:
             raise EventValidationError("process outcome v2 scorecard evidence is invalid") from exc
         if utility != float(payload["observed_validation_utility"]):
             raise EventValidationError("process outcome v2 utility was not deterministically rebuilt")
+
+    def _validate_external_retriever_evidence(
+        self,
+        event_type: str,
+        payload: Mapping[str, Any],
+    ) -> None:
+        """Rebuild v3 components, propensities and selection before locking."""
+        if event_type != "RetrieverDecisionV3Recorded":
+            return
+        references = [
+            reference for reference in payload["artifact_refs"]
+            if reference["media_type"]
+            == "application/vnd.vibe.retriever-input-bundle-v3+json"
+        ]
+        if len(references) != 1:
+            raise EventValidationError("retriever v3 requires one source input bundle")
+        reference = references[0]
+        try:
+            from src.alpha_foundry.dag import FactorDAGQuery
+            from src.alpha_foundry.retrieval.evidence_v3 import (
+                RetrieverInputArtifactStoreV3,
+            )
+            from src.alpha_foundry.retrieval.policy import ActivationRetrieverPolicy
+            from src.alpha_foundry.retrieval.shadow import ShadowRetriever
+            from src.alpha_quality.scope import DiscoveryEvidenceProjector
+
+            bundle = RetrieverInputArtifactStoreV3(self.artifact_root).read(
+                str(reference["relative_path"]),
+                expected_bundle_hash=str(payload["input_bundle_hash"]),
+            )
+            if (
+                bundle.eligible_event_watermark != payload["eligible_event_watermark"]
+                or bundle.data_snapshot_hash != payload["data_snapshot_hash"]
+                or bundle.seed != payload["seed"]
+                or bundle.candidate_budget != payload["candidate_budget"]
+                or dict(bundle.policy_config) != dict(payload["policy_config"])
+            ):
+                raise ValueError("retriever v3 bundle and event inputs differ")
+            evidence = DiscoveryEvidenceProjector(flags=self.flags).project_at_watermark(
+                self,
+                data_snapshot_hash=bundle.data_snapshot_hash,
+                watermark_event_hash=bundle.eligible_event_watermark,
+            )
+            decision = ShadowRetriever(
+                flags=self.flags,
+                policy=ActivationRetrieverPolicy(**dict(bundle.policy_config)),
+            ).decide(
+                official_candidate_ids=bundle.official_candidate_ids,
+                evidence=evidence,
+                query=FactorDAGQuery(evidence.factual.dag),
+                candidates=bundle.candidates,
+                seed=bundle.seed,
+                candidate_budget=bundle.candidate_budget,
+            )
+        except (KeyError, OSError, TypeError, ValueError, RuntimeError) as exc:
+            raise EventValidationError(
+                "retriever v3 source evidence cannot rebuild the decision"
+            ) from exc
+        expected = {
+            "shadow_decision_hash": decision.decision_hash,
+            "selected_factor_spec_ids": list(decision.selected_factor_spec_ids),
+            "seed": decision.seed,
+            "policy_version": decision.policy_version,
+            "policy_hash": decision.policy_hash,
+            "policy_config": dict(decision.policy_config),
+            "eligible_event_watermark": decision.eligible_event_watermark,
+            "data_snapshot_hash": decision.data_snapshot_hash,
+            "candidate_budget": decision.candidate_budget,
+            "official_output_hash": decision.official_output_hash,
+            "propensity_semantics": decision.propensity_semantics,
+            "components": [component.to_dict() for component in decision.components],
+            "shadow_only": decision.shadow_only,
+        }
+        if any(payload[name] != value for name, value in expected.items()):
+            raise EventValidationError(
+                "retriever v3 event differs from its deterministically rebuilt decision"
+            )
 
     @staticmethod
     def _validate_factor_definition_identity(
@@ -713,6 +796,9 @@ class ResearchEventStore:
             self._validate_process_outcome_v2_transition(conn, draft, payload)
             return
         if event_type == "RetrieverDecisionV2Recorded":
+            self._validate_retriever_v2_transition(conn, payload)
+            return
+        if event_type == "RetrieverDecisionV3Recorded":
             self._validate_retriever_v2_transition(conn, payload)
             return
         if event_type == "ActivationPlanRegistered":
@@ -1792,6 +1878,10 @@ class ResearchEventStore:
                     event_dict["payload"],
                 )
                 self._validate_artifacts(validated_payload)
+                self._validate_external_retriever_evidence(
+                    event.event_type,
+                    validated_payload,
+                )
                 if validated_payload != event_dict["payload"]:
                     return False
                 self._validate_draft_identity(
@@ -2347,6 +2437,57 @@ class ResearchEventStore:
             events=tuple(normalized),
             full_event_count=len(full),
             full_chain_head=full[-1].event_hash,
+            full_replay_hash=replay.projection_hash,
+        )
+
+    def _events_through_watermark(
+        self,
+        watermark_event_hash: str,
+    ) -> tuple[ResearchEventEnvelope, ...]:
+        full = self.query_events()
+        matches = [
+            index for index, event in enumerate(full)
+            if event.event_hash == watermark_event_hash
+        ]
+        if len(matches) != 1:
+            raise EventValidationError("historical discovery watermark is unknown")
+        return tuple(full[: matches[0] + 1])
+
+    def _verified_subsequence_at_watermark(
+        self,
+        selected: list[ResearchEventEnvelope] | tuple[ResearchEventEnvelope, ...],
+        *,
+        watermark_event_hash: str,
+    ) -> VerifiedEventSubsequence:
+        """Bind an exact subset to a verified historical chain prefix."""
+
+        prefix = self._events_through_watermark(watermark_event_hash)
+        if not prefix or not self._verify_events(list(prefix)):
+            raise ResearchEventAppendError(
+                "cannot issue an event subsequence from an invalid historical prefix"
+            )
+        by_hash = {event.event_hash: (index, event) for index, event in enumerate(prefix)}
+        prior_index = -1
+        normalized: list[ResearchEventEnvelope] = []
+        seen: set[str] = set()
+        for event in selected:
+            source = by_hash.get(event.event_hash)
+            if source is None or source[0] <= prior_index or event.event_hash in seen:
+                raise EventValidationError(
+                    "selected events are not an ordered historical-prefix subsequence"
+                )
+            if source[1].to_dict() != event.to_dict():
+                raise EventValidationError(
+                    "selected historical event differs from its prefix source"
+                )
+            prior_index = source[0]
+            seen.add(event.event_hash)
+            normalized.append(source[1])
+        replay = build_replay_state(prefix)
+        return _issue_verified_event_subsequence(
+            events=tuple(normalized),
+            full_event_count=len(prefix),
+            full_chain_head=prefix[-1].event_hash,
             full_replay_hash=replay.projection_hash,
         )
 
