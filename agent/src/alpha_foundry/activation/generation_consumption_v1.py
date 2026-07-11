@@ -250,7 +250,12 @@ class ActivationTreatmentGeneratorV1:
             run_id=request.execution_run_id,
         )
         result = search.generate()
-        failures: set[str] = set()
+        # RetrieverInputBundleV4 content-addresses caller-supplied panels,
+        # embeddings, base scores, and cost hashes, but cannot independently
+        # reproduce them from the frozen data snapshot and registered providers.
+        # The search may be replayed to prove selected-parent consumption, but
+        # that is not sufficient to make its treatment source activation-eligible.
+        failures: set[str] = {"RETRIEVER_FEATURE_SOURCE_UNVERIFIED"}
         if len(result.attempts) != len(result.candidates):
             failures.add("TERMINAL_ATTEMPT_COVERAGE_INCOMPLETE")
         records = tuple(
