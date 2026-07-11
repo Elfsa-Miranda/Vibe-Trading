@@ -193,6 +193,7 @@ def test_closed_payload_registry_covers_every_required_event_type() -> None:
         "ComplementEvidenceRecorded",
         "QualityDecisionRecorded",
         "QualityDecisionV2Recorded",
+        "QualityDecisionV3Recorded",
         "FinalCandidateFrozen",
         "FinalTestCapabilityIssued",
         "FinalTestAccessRecorded",
@@ -629,6 +630,25 @@ def test_every_registered_payload_schema_validates_a_complete_production_shape()
             "forward_success_claim": False,
             "artifact_refs": [],
         },
+        "QualityDecisionV3Recorded": {
+            "decision_id": "quality-v3-1",
+            "decision_hash": digest,
+            "quality_decision_hash": digest,
+            "input_bundle_hash": digest,
+            "factor_spec_id": "factor-1",
+            "decision": "candidate_zoo",
+            "tier": 2,
+            "policy_version": "decision-v2-policy.1",
+            "policy_hash": digest,
+            "evidence_hashes": [digest],
+            "reasons": ["TERMINAL_TRAIN_VALID_EVIDENCE_QUALIFIED"],
+            "warnings": [],
+            "caps": [],
+            "limitations": ["TRAIN_VALID_ONLY"],
+            "within_tier_score": 0.5,
+            "forward_success_claim": False,
+            "artifact_refs": [],
+        },
         "FinalCandidateFrozen": {
             "freeze_id": "final-freeze-1",
             "candidate_schema_version": "frozen_final_candidate.v1",
@@ -811,6 +831,26 @@ def test_every_registered_payload_schema_validates_a_complete_production_shape()
             "limitations": decision_v2["limitations"],
             "within_tier_score": decision_v2["within_tier_score"],
             "forward_success_claim": decision_v2["forward_success_claim"],
+        }
+    )
+    decision_v3 = samples["QualityDecisionV3Recorded"]
+    decision_v3["decision_hash"] = canonical_json_hash(
+        {
+            "schema_version": "quality_decision_source_bound.v3",
+            "quality_decision_hash": decision_v3["quality_decision_hash"],
+            "input_bundle_hash": decision_v3["input_bundle_hash"],
+            "factor_spec_id": decision_v3["factor_spec_id"],
+            "decision": decision_v3["decision"],
+            "tier": decision_v3["tier"],
+            "policy_version": decision_v3["policy_version"],
+            "policy_hash": decision_v3["policy_hash"],
+            "evidence_hashes": decision_v3["evidence_hashes"],
+            "reasons": decision_v3["reasons"],
+            "warnings": decision_v3["warnings"],
+            "caps": decision_v3["caps"],
+            "limitations": decision_v3["limitations"],
+            "within_tier_score": decision_v3["within_tier_score"],
+            "forward_success_claim": decision_v3["forward_success_claim"],
         }
     )
 

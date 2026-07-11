@@ -848,6 +848,34 @@ _PAYLOAD_SPECS: dict[str, PayloadSpec] = {
             "artifact_refs": _artifact_list,
         },
     ),
+    "QualityDecisionV3Recorded": PayloadSpec(
+        "quality_decision_recorded.v3",
+        {
+            "decision_id": _string,
+            "decision_hash": _hash,
+            "quality_decision_hash": _hash,
+            "input_bundle_hash": _hash,
+            "factor_spec_id": _string,
+            "decision": _enum(
+                "reject",
+                "research_only",
+                "candidate_zoo",
+                "paper_candidate",
+                "forward_track",
+            ),
+            "tier": _nonnegative_integer,
+            "policy_version": _string,
+            "policy_hash": _hash,
+            "evidence_hashes": _nonempty_hash_list,
+            "reasons": _reason_codes,
+            "warnings": _reason_codes,
+            "caps": _reason_codes,
+            "limitations": _string_list,
+            "within_tier_score": _finite_number,
+            "forward_success_claim": _boolean,
+            "artifact_refs": _artifact_list,
+        },
+    ),
     "FinalCandidateFrozen": PayloadSpec(
         "final_candidate_frozen.v1",
         {
@@ -1318,6 +1346,42 @@ def _validate_cross_field_rules(event_type: str, payload: Mapping[str, Any]) -> 
         }
         if canonical_json_hash(decision_content) != payload["decision_hash"]:
             raise EventValidationError("Decision v2 hash does not match deterministic content")
+    if event_type == "QualityDecisionV3Recorded":
+        decision = payload["decision"]
+        expected_tier = {
+            "reject": 0,
+            "research_only": 1,
+            "candidate_zoo": 2,
+            "paper_candidate": 3,
+            "forward_track": 4,
+        }[decision]
+        if payload["tier"] != expected_tier:
+            raise EventValidationError("Decision v3 tier does not match decision")
+        if decision == "reject" and not payload["reasons"]:
+            raise EventValidationError("Decision v3 reject requires exact reasons")
+        if decision == "research_only" and not payload["caps"]:
+            raise EventValidationError("Decision v3 research_only requires exact caps")
+        if payload["forward_success_claim"]:
+            raise EventValidationError("Decision v3 cannot claim forward success")
+        decision_content = {
+            "schema_version": "quality_decision_source_bound.v3",
+            "quality_decision_hash": payload["quality_decision_hash"],
+            "input_bundle_hash": payload["input_bundle_hash"],
+            "factor_spec_id": payload["factor_spec_id"],
+            "decision": decision,
+            "tier": payload["tier"],
+            "policy_version": payload["policy_version"],
+            "policy_hash": payload["policy_hash"],
+            "evidence_hashes": payload["evidence_hashes"],
+            "reasons": payload["reasons"],
+            "warnings": payload["warnings"],
+            "caps": payload["caps"],
+            "limitations": payload["limitations"],
+            "within_tier_score": payload["within_tier_score"],
+            "forward_success_claim": payload["forward_success_claim"],
+        }
+        if canonical_json_hash(decision_content) != payload["decision_hash"]:
+            raise EventValidationError("Decision v3 hash does not match source-bound content")
     if event_type == "FinalCandidateFrozen":
         candidate_content = {
             "schema_version": payload["candidate_schema_version"],
@@ -1440,7 +1504,7 @@ def envelope_diagnostics(
         hard_failures.add("FINAL_TEST_CONTAMINATED")
     if event_type in {"ForwardPlanV2Recorded", "ForwardObservationV2Recorded"}:
         warnings.add("FORWARD_MONITORING_ONLY")
-    if event_type == "QualityDecisionV2Recorded":
+    if event_type in {"QualityDecisionV2Recorded", "QualityDecisionV3Recorded"}:
         warnings |= {str(code) for code in payload["warnings"]}
         warnings |= {str(code) for code in payload["caps"]}
         if payload["decision"] == "reject":

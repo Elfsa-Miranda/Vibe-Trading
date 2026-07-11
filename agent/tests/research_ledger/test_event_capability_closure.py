@@ -34,6 +34,7 @@ _SPECIALIZED_EVENT_TYPES = {
     "ComplementEvidenceRecorded",
     "QualityDecisionRecorded",
     "QualityDecisionV2Recorded",
+    "QualityDecisionV3Recorded",
     "FinalCandidateFrozen",
     "FinalTestCapabilityIssued",
     "FinalTestAccessRecorded",
