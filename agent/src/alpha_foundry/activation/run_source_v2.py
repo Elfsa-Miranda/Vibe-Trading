@@ -9,6 +9,7 @@ from typing import Any, Mapping
 
 from src.alpha_foundry.activation.artifacts import ActivationArtifactStore
 from src.alpha_foundry.activation.model import ActivationRunManifest, TERMINAL_STATUSES
+from src.alpha_foundry.activation.runner import activation_arm_execution_run_id
 from src.research_ledger.events import ResearchEventEnvelope, ResearchEventStore
 from src.research_ledger.hash_utils import canonical_json_hash
 
@@ -371,11 +372,16 @@ class ActivationRunSourceAuditorV2:
     ) -> tuple[
         dict[str, int], tuple[str, ...], dict[str, str], dict[str, str]
     ]:
+        execution_run_id = activation_arm_execution_run_id(
+            plan_hash=summary.plan_hash,
+            run_group_id=summary.run_group_id,
+            arm=summary.arm,
+        )
         starts = {
             str(event.payload["trial_id"]): event
             for event in all_events
             if event.event_type == "TrialStarted"
-            and event.run_id == summary.run_group_id
+            and event.run_id == execution_run_id
         }
         evaluation_by_hash = {event.event_hash: event for event in evaluations}
         cited_evaluations: set[str] = set()
@@ -386,7 +392,7 @@ class ActivationRunSourceAuditorV2:
         seen_trials: set[str] = set()
         for terminal in terminals:
             trial_id = str(terminal.payload["trial_id"])
-            if terminal.run_id != summary.run_group_id or trial_id in seen_trials:
+            if terminal.run_id != execution_run_id or trial_id in seen_trials:
                 failures.add("TERMINAL_RUN_OR_DUPLICATE_TRIAL_MISMATCH")
                 continue
             seen_trials.add(trial_id)
@@ -404,7 +410,7 @@ class ActivationRunSourceAuditorV2:
                 evaluation = evaluation_by_hash.get(str(evaluation_hash))
                 if (
                     evaluation is None
-                    or evaluation.run_id != summary.run_group_id
+                    or evaluation.run_id != execution_run_id
                     or evaluation.payload["trial_id"] != trial_id
                     or evaluation.payload["data_scope"] not in {"valid", "train_valid"}
                 ):
@@ -425,10 +431,15 @@ class ActivationRunSourceAuditorV2:
         candidate_by_trial: Mapping[str, str],
         failures: set[str],
     ) -> tuple[str, ...]:
+        execution_run_id = activation_arm_execution_run_id(
+            plan_hash=summary.plan_hash,
+            run_group_id=summary.run_group_id,
+            arm=summary.arm,
+        )
         by_factor: dict[str, ResearchEventEnvelope] = {}
         for event in decisions:
             factor_id = str(event.payload["factor_spec_id"])
-            if event.run_id != summary.run_group_id or factor_id in by_factor:
+            if event.run_id != execution_run_id or factor_id in by_factor:
                 failures.add("QUALITY_DECISION_RUN_OR_FACTOR_MISMATCH")
             by_factor[factor_id] = event
         if set(by_factor) != set(trial_to_factor.values()):

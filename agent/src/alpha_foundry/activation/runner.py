@@ -11,6 +11,7 @@ from src.alpha_foundry.activation.model import (
     ActivationExperimentPlan,
     ActivationRunManifest,
 )
+from src.research_ledger.hash_utils import canonical_json_hash
 
 if TYPE_CHECKING:
     from src.alpha_foundry.activation.resource_v1 import (
@@ -71,6 +72,7 @@ class ActivationArmRequest:
     plan_hash: str
     pair_id: str
     run_group_id: str
+    execution_run_id: str
     arm: Literal["control", "treatment"]
     seed: int
     mechanism_family: str
@@ -81,8 +83,49 @@ class ActivationArmRequest:
     candidate_budget: int
     compute_budget: int
 
+    def __post_init__(self) -> None:
+        expected_execution = activation_arm_execution_run_id(
+            plan_hash=self.plan_hash,
+            run_group_id=self.run_group_id,
+            arm=self.arm,
+        )
+        if self.execution_run_id != expected_execution:
+            raise ValueError("Activation arm execution namespace is not runner-derived")
+        if self.rng_namespace != (
+            f"{self.plan_hash}:{self.run_group_id}:{self.arm}:rng"
+        ):
+            raise ValueError("Activation arm RNG namespace is not frozen")
+        if self.cache_namespace != (
+            f"{self.plan_hash}:{self.run_group_id}:{self.arm}:cache"
+        ):
+            raise ValueError("Activation arm cache namespace is not frozen")
+        if (
+            isinstance(self.candidate_budget, bool)
+            or isinstance(self.compute_budget, bool)
+            or self.candidate_budget < 1
+            or self.compute_budget < self.candidate_budget
+        ):
+            raise ValueError("Activation arm budgets are invalid")
+
 
 ArmExecutor = Callable[[ActivationArmRequest, TrainValidActivationScope], ActivationRunManifest]
+
+
+def activation_arm_execution_run_id(
+    *,
+    plan_hash: str,
+    run_group_id: str,
+    arm: Literal["control", "treatment"],
+) -> str:
+    digest = canonical_json_hash(
+        {
+            "schema_version": "activation_arm_execution_run.v1",
+            "plan_hash": plan_hash,
+            "run_group_id": run_group_id,
+            "arm": arm,
+        }
+    )
+    return "activation-arm-" + digest.removeprefix("sha256:")[:24]
 
 
 class PairedActivationRunner:
@@ -131,6 +174,11 @@ class PairedActivationRunner:
                 plan_hash=plan.plan_hash,
                 pair_id=pair_id,
                 run_group_id=run_group_id,
+                execution_run_id=activation_arm_execution_run_id(
+                    plan_hash=plan.plan_hash,
+                    run_group_id=run_group_id,
+                    arm=cast(Literal["control", "treatment"], arm),
+                ),
                 arm=cast(Literal["control", "treatment"], arm),
                 seed=seed,
                 mechanism_family=mechanism_family,
@@ -196,6 +244,11 @@ class PairedActivationRunner:
                 plan_hash=plan.plan_hash,
                 pair_id=f"{run_group_id}:{mechanism_family}:{dag_region}",
                 run_group_id=run_group_id,
+                execution_run_id=activation_arm_execution_run_id(
+                    plan_hash=plan.plan_hash,
+                    run_group_id=run_group_id,
+                    arm=cast(Literal["control", "treatment"], arm),
+                ),
                 arm=cast(Literal["control", "treatment"], arm),
                 seed=plan.design.seeds[index],
                 mechanism_family=mechanism_family,
@@ -246,4 +299,5 @@ class PairedActivationRunner:
 __all__ = [
     "ActivationArmRequest", "ArmExecutor", "PairedActivationRunner",
     "RegisteredActivationPlan", "TrainValidActivationScope",
+    "activation_arm_execution_run_id",
 ]

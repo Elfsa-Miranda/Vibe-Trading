@@ -24,6 +24,7 @@ from src.alpha_foundry.activation.runner import (
     PairedActivationRunner,
     RegisteredActivationPlan,
     TrainValidActivationScope,
+    activation_arm_execution_run_id,
 )
 from src.alpha_foundry.activation.run_source_v2 import (
     ActivationRunSourceAuditV2,
@@ -46,4 +47,5 @@ __all__ = [
     "PairedActivationRunner", "RegisteredActivationPlan", "RetrieverActivationDecision",
     "RetrieverActivationPolicy", "RetrieverModeResolution", "TrainValidActivationScope",
     "holm_adjust",
+    "activation_arm_execution_run_id",
 ]
