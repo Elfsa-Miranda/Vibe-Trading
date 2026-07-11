@@ -714,6 +714,31 @@ _PAYLOAD_SPECS: dict[str, PayloadSpec] = {
             "artifact_refs": _artifact_list,
         },
     ),
+    "ActivationGenerationConsumptionRecorded": PayloadSpec(
+        "activation_generation_consumption_recorded.v1",
+        {
+            "generation_id": _string,
+            "plan_hash": _hash,
+            "pair_id": _string,
+            "run_group_id": _string,
+            "mechanism_family": _string,
+            "dag_region": _string,
+            "execution_run_id": _string,
+            "retriever_decision_event_hash": _hash,
+            "retriever_decision_hash": _hash,
+            "control_evidence_event_hash": _hash,
+            "generator_policy_hash": _hash,
+            "selected_parent_factor_spec_ids": _nonempty_string_list,
+            "consumed_parent_factor_spec_ids": _nonempty_string_list,
+            "generated_candidate_count": _positive_integer,
+            "candidate_budget": _candidate_budget,
+            "compute_budget": _positive_integer,
+            "source_failure_codes": _reason_codes,
+            "source_complete": _boolean,
+            "evidence_hash": _hash,
+            "artifact_refs": _artifact_list,
+        },
+    ),
     "ActivationResultRecorded": PayloadSpec(
         "activation_result_recorded.v1",
         {
@@ -1555,6 +1580,23 @@ def _validate_cross_field_rules(event_type: str, payload: Mapping[str, Any]) -> 
         if payload["resource_id"] != expected_resource_id:
             raise EventValidationError(
                 "Activation resource identity must derive from its evidence hash"
+            )
+    if event_type == "ActivationGenerationConsumptionRecorded":
+        expected_identifier = (
+            "activation-generation-v1-"
+            + str(payload["evidence_hash"]).removeprefix("sha256:")[:24]
+        )
+        if payload["generation_id"] != expected_identifier:
+            raise EventValidationError(
+                "Activation generation identity must derive from evidence"
+            )
+        if payload["source_complete"] != (not payload["source_failure_codes"]):
+            raise EventValidationError(
+                "Activation generation completeness must derive from failures"
+            )
+        if payload["generated_candidate_count"] > payload["candidate_budget"]:
+            raise EventValidationError(
+                "Activation generation exceeds its frozen candidate budget"
             )
     if event_type == "FinalCandidateFrozen":
         candidate_content = {

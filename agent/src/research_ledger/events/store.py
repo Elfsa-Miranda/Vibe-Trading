@@ -90,6 +90,10 @@ _EVENT_CAPABILITY_REQUIREMENTS: Mapping[str, tuple[str, ...]] = {
         "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
         "VIBE_TRADING_PROCESS_MEMORY", "VIBE_TRADING_TOPOLOGY_RETRIEVER",
     ),
+    "ActivationGenerationConsumptionRecorded": (
+        "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
+        "VIBE_TRADING_PROCESS_MEMORY", "VIBE_TRADING_TOPOLOGY_RETRIEVER",
+    ),
     "ActivationResultRecorded": (
         "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
         "VIBE_TRADING_PROCESS_MEMORY", "VIBE_TRADING_TOPOLOGY_RETRIEVER",
@@ -294,6 +298,7 @@ class ResearchEventStore:
         self._validate_external_activation_source_audit(draft.event_type, payload)
         self._validate_external_official_control_evidence(draft.event_type, payload)
         self._validate_external_activation_resource(draft.event_type, payload)
+        self._validate_external_generation_consumption(draft.event_type, payload)
         self._validate_factor_definition_identity(draft.event_type, payload)
         self._validate_registry_bootstrap_identity(draft.event_type, payload)
         payload_hash = canonical_json_hash(payload)
@@ -511,6 +516,7 @@ class ResearchEventStore:
             "ActivationRunRecorded": "manifest_id",
             "ActivationRunSourceAudited": "audit_id",
             "ActivationResourceMeasured": "resource_id",
+            "ActivationGenerationConsumptionRecorded": "generation_id",
             "ActivationResultRecorded": "result_id",
             "RetrieverActivationDecisionRecorded": "activation_decision_id",
             "FalsificationContractRegistered": "contract_id",
@@ -1034,6 +1040,236 @@ class ResearchEventStore:
         if any(payload[name] != value for name, value in expected.items()):
             raise EventValidationError("Activation resource event differs from artifact")
 
+    def _validate_external_generation_consumption(
+        self,
+        event_type: str,
+        payload: Mapping[str, Any],
+    ) -> None:
+        if event_type != "ActivationGenerationConsumptionRecorded":
+            return
+        references = [
+            reference for reference in payload["artifact_refs"]
+            if reference["media_type"]
+            == "application/vnd.vibe.activation-generation-consumption-v1+json"
+        ]
+        if len(references) != 1:
+            raise EventValidationError(
+                "Activation generation requires one source artifact"
+            )
+        try:
+            from src.alpha_foundry.activation.artifacts import ActivationArtifactStore
+            from src.alpha_foundry.activation.generation_consumption_v1 import (
+                ActivationGenerationConsumptionV1,
+            )
+            from src.alpha_foundry.dsl.identity import build_expression_identity
+            from src.alpha_foundry.mutators import SeedMutator
+            from src.alpha_foundry.retrieval.evidence_v4 import (
+                RetrieverInputArtifactStoreV4,
+            )
+            from src.alpha_foundry.search import AlphaFoundrySearch
+            from src.alpha_foundry.seed_bank import AlphaSeed, SeedBank
+
+            artifacts = ActivationArtifactStore(self.artifact_root)
+            expected_relative = artifacts.relative_path(
+                "generation_consumption", str(payload["evidence_hash"])
+            )
+            if str(references[0]["relative_path"]).replace("\\", "/") != expected_relative:
+                raise ValueError("generation-consumption artifact path is not canonical")
+            evidence = ActivationGenerationConsumptionV1.from_dict(
+                artifacts.get(
+                    "generation_consumption", str(payload["evidence_hash"])
+                )
+            )
+            plan_matches = [
+                event for event in self.query_events(
+                    event_type="ActivationPlanRegistered"
+                )
+                if event.payload["plan_hash"] == evidence.plan_hash
+            ]
+            if len(plan_matches) != 1:
+                raise ValueError("generation-consumption plan source is missing")
+            plan = artifacts.get("plan", evidence.plan_hash)
+            design = plan.get("design")
+            provenance = plan.get("provenance")
+            if not isinstance(design, Mapping) or not isinstance(provenance, Mapping):
+                raise ValueError("generation-consumption plan is invalid")
+            if (
+                evidence.run_group_id not in design.get("run_group_ids", [])
+                or evidence.mechanism_family not in design.get("mechanism_families", [])
+                or evidence.dag_region not in design.get("dag_regions", [])
+                or design.get("candidate_budget") != evidence.candidate_budget
+                or design.get("compute_budget") != evidence.compute_budget
+            ):
+                raise ValueError("generation-consumption differs from frozen plan")
+            retriever_matches = [
+                event for event in self.query_events(
+                    event_type="RetrieverDecisionV4Recorded"
+                )
+                if event.event_hash == evidence.retriever_decision_event_hash
+            ]
+            if len(retriever_matches) != 1:
+                raise ValueError("generation-consumption retriever source is missing")
+            retriever_event = retriever_matches[0]
+            if (
+                retriever_event.run_id != evidence.execution_run_id
+                or retriever_event.payload["decision_hash"]
+                != evidence.retriever_decision_hash
+                or tuple(retriever_event.payload["selected_factor_spec_ids"])
+                != evidence.selected_parent_factor_spec_ids
+                or retriever_event.payload["control_evidence_event_hash"]
+                != evidence.control_evidence_event_hash
+                or provenance.get("treatment_policy_hash")
+                != retriever_event.payload["policy_hash"]
+                or provenance.get("train_snapshot_hash")
+                != retriever_event.payload["data_snapshot_hash"]
+            ):
+                raise ValueError("generation-consumption retriever binding differs")
+            bundle_refs = [
+                reference for reference in retriever_event.payload["artifact_refs"]
+                if reference["media_type"]
+                == "application/vnd.vibe.retriever-input-bundle-v4+json"
+            ]
+            if len(bundle_refs) != 1:
+                raise ValueError("generation-consumption retriever bundle is missing")
+            bundle = RetrieverInputArtifactStoreV4(self.artifact_root).read(
+                str(bundle_refs[0]["relative_path"]),
+                str(retriever_event.payload["input_bundle_hash"]),
+            )
+            candidate_inputs = {
+                item.factor_spec_id: item
+                for item in bundle.retriever_input.candidates
+            }
+            for parent in evidence.selected_parents:
+                source = candidate_inputs.get(str(parent["factor_spec_id"]))
+                if source is None or (
+                    build_expression_identity(str(parent["formula"])).canonical_ast
+                    != source.canonical_ast
+                ):
+                    raise ValueError("generation-consumption parent AST differs")
+            control_matches = [
+                event for event in self.query_events(
+                    event_type="OfficialSearchControlRecorded"
+                )
+                if event.event_hash == evidence.control_evidence_event_hash
+            ]
+            if len(control_matches) != 1:
+                raise ValueError("generation-consumption control source is missing")
+            from src.alpha_foundry.control_evidence import (
+                OfficialSearchControlArtifactStoreV1,
+            )
+
+            control_event = control_matches[0]
+            control_refs = [
+                reference for reference in control_event.payload["artifact_refs"]
+                if reference["media_type"]
+                == OfficialSearchControlArtifactStoreV1.media_type
+            ]
+            if len(control_refs) != 1:
+                raise ValueError("generation-consumption control artifact is missing")
+            control = OfficialSearchControlArtifactStoreV1(self.artifact_root).read(
+                str(control_refs[0]["relative_path"]),
+                str(control_event.payload["evidence_hash"]),
+            )
+            policy = control.policy
+            if provenance.get("control_policy_hash") != policy.policy_hash:
+                raise ValueError("generation-consumption control policy differs from plan")
+            expected_policy_hash = canonical_json_hash(
+                {
+                    "generator_version": policy.generator_version,
+                    "mutator_version": policy.mutator_version,
+                    "mutation_templates": list(policy.mutation_templates),
+                    "max_candidates_per_seed": policy.max_candidates_per_seed,
+                    "max_candidates": evidence.candidate_budget,
+                    "trial_budget": evidence.compute_budget,
+                }
+            )
+            if expected_policy_hash != evidence.generator_policy_hash:
+                raise ValueError("generation-consumption generator policy differs")
+            replay = AlphaFoundrySearch(
+                seed_bank=SeedBank([
+                    AlphaSeed(
+                        seed_id=str(parent["factor_spec_id"]),
+                        formula=str(parent["formula"]),
+                        source="content-addressed:" + str(parent["source_hash"]),
+                    )
+                    for parent in evidence.selected_parents
+                ]),
+                mutator=SeedMutator(
+                    max_candidates_per_seed=policy.max_candidates_per_seed
+                ),
+                max_candidates=evidence.candidate_budget,
+                trial_budget=evidence.compute_budget,
+            ).generate()
+            replay_records = tuple(
+                (
+                    candidate.candidate_id,
+                    candidate.parent_seed_id,
+                    candidate.formula_hash,
+                )
+                for candidate in replay.candidates
+            )
+            evidence_records = tuple(
+                (
+                    str(record["candidate_id"]),
+                    str(record["parent_factor_spec_id"]),
+                    str(record["formula_hash"]),
+                )
+                for record in evidence.generated_candidates
+            )
+            if replay_records != evidence_records:
+                raise ValueError("generation-consumption search does not replay")
+            all_events = self.query_events()
+            by_hash = {event.event_hash: event for event in all_events}
+            starts = {
+                str(event.payload["trial_id"]): event
+                for event in all_events
+                if event.event_type == "TrialStarted"
+            }
+            for record in evidence.generated_candidates:
+                terminal = by_hash.get(str(record["terminal_event_hash"]))
+                if terminal is None or terminal.event_type != "TrialTerminated":
+                    raise ValueError("generation-consumption terminal is missing")
+                start = starts.get(str(terminal.payload["trial_id"]))
+                if (
+                    terminal.run_id != evidence.execution_run_id
+                    or start is None
+                    or start.run_id != evidence.execution_run_id
+                    or start.payload["candidate_id"] != record["candidate_id"]
+                ):
+                    raise ValueError("generation-consumption trial binding differs")
+        except (KeyError, OSError, TypeError, ValueError, RuntimeError) as exc:
+            raise EventValidationError(
+                "Activation generation-consumption evidence is invalid"
+            ) from exc
+        expected = {
+            "plan_hash": evidence.plan_hash,
+            "pair_id": evidence.pair_id,
+            "run_group_id": evidence.run_group_id,
+            "mechanism_family": evidence.mechanism_family,
+            "dag_region": evidence.dag_region,
+            "execution_run_id": evidence.execution_run_id,
+            "retriever_decision_event_hash": evidence.retriever_decision_event_hash,
+            "retriever_decision_hash": evidence.retriever_decision_hash,
+            "control_evidence_event_hash": evidence.control_evidence_event_hash,
+            "generator_policy_hash": evidence.generator_policy_hash,
+            "selected_parent_factor_spec_ids": list(
+                evidence.selected_parent_factor_spec_ids
+            ),
+            "consumed_parent_factor_spec_ids": list(
+                evidence.consumed_parent_factor_spec_ids
+            ),
+            "generated_candidate_count": len(evidence.generated_candidates),
+            "candidate_budget": evidence.candidate_budget,
+            "compute_budget": evidence.compute_budget,
+            "source_failure_codes": list(evidence.source_failure_codes),
+            "source_complete": evidence.source_complete,
+            "evidence_hash": evidence.evidence_hash,
+        }
+        if any(payload[name] != value for name, value in expected.items()):
+            raise EventValidationError(
+                "Activation generation event differs from its source artifact"
+            )
+
     @staticmethod
     def _validate_factor_definition_identity(
         event_type: str, payload: Mapping[str, Any]
@@ -1287,6 +1523,60 @@ class ResearchEventStore:
                     "Activation resource event run does not match its run group"
                 )
             self._validate_activation_resource_transition(conn, payload)
+            return
+        if event_type == "ActivationGenerationConsumptionRecorded":
+            if draft.run_id != payload["execution_run_id"]:
+                raise EventTransitionError(
+                    "Activation generation event run differs from execution run"
+                )
+            self._activation_plan_payload(conn, str(payload["plan_hash"]))
+            retriever = conn.execute(
+                """
+                SELECT run_id, payload FROM research_events
+                WHERE event_type = 'RetrieverDecisionV4Recorded'
+                  AND event_hash = ?
+                """,
+                (payload["retriever_decision_event_hash"],),
+            ).fetchone()
+            if retriever is None:
+                raise EventTransitionError(
+                    "Activation generation lacks its retriever decision"
+                )
+            retriever_payload = json.loads(str(retriever["payload"]))
+            if (
+                str(retriever["run_id"]) != payload["execution_run_id"]
+                or retriever_payload["decision_hash"]
+                != payload["retriever_decision_hash"]
+                or retriever_payload["control_evidence_event_hash"]
+                != payload["control_evidence_event_hash"]
+            ):
+                raise EventTransitionError(
+                    "Activation generation retriever binding differs"
+                )
+            prior = conn.execute(
+                """
+                SELECT 1 FROM research_events
+                WHERE event_type = 'ActivationGenerationConsumptionRecorded'
+                  AND (entity_id = ? OR json_extract(payload, '$.evidence_hash') = ?)
+                """,
+                (payload["generation_id"], payload["evidence_hash"]),
+            ).fetchone()
+            if prior is not None:
+                raise EventTransitionError(
+                    "Activation generation-consumption evidence already exists"
+                )
+            result = conn.execute(
+                """
+                SELECT 1 FROM research_events
+                WHERE event_type = 'ActivationResultRecorded'
+                  AND json_extract(payload, '$.plan_hash') = ?
+                """,
+                (payload["plan_hash"],),
+            ).fetchone()
+            if result is not None:
+                raise EventTransitionError(
+                    "Activation generation cannot append after result"
+                )
             return
         if event_type == "ActivationResultRecorded":
             self._validate_activation_result_transition(conn, payload)
@@ -2461,6 +2751,10 @@ class ResearchEventStore:
                     event.event_type,
                     validated_payload,
                 )
+                self._validate_external_generation_consumption(
+                    event.event_type,
+                    validated_payload,
+                )
                 if validated_payload != event_dict["payload"]:
                     return False
                 self._validate_draft_identity(
@@ -2545,12 +2839,17 @@ class ResearchEventStore:
         activation_resource_ids: set[str] = set()
         activation_resource_evidence_hashes: set[str] = set()
         activation_resource_manifest_hashes: set[str] = set()
+        activation_generation_ids: set[str] = set()
+        activation_generation_hashes: set[str] = set()
         official_control_ids: set[str] = set()
+        retriever_v4_events: dict[str, ResearchEventEnvelope] = {}
         activation_results: dict[str, Mapping[str, Any]] = {}
         activation_result_plans: set[str] = set()
         activation_decision_plans: set[str] = set()
         for event in events:
             payload = event.payload
+            if event.event_type == "RetrieverDecisionV4Recorded":
+                retriever_v4_events[event.event_hash] = event
             if event.event_type == "FactorDefinitionRecorded":
                 factor_spec_id = str(payload["factor_spec_id"])
                 definitions[factor_spec_id] = payload
@@ -2822,6 +3121,25 @@ class ResearchEventStore:
                 activation_resource_ids.add(resource_id)
                 activation_resource_evidence_hashes.add(evidence_hash)
                 activation_resource_manifest_hashes.add(manifest_hash)
+            elif event.event_type == "ActivationGenerationConsumptionRecorded":
+                plan_hash = str(payload["plan_hash"])
+                generation_id = str(payload["generation_id"])
+                evidence_hash = str(payload["evidence_hash"])
+                retriever_source = retriever_v4_events.get(
+                    str(payload["retriever_decision_event_hash"])
+                )
+                if (
+                    plan_hash not in activation_plans
+                    or plan_hash in activation_result_plans
+                    or event.run_id != payload["execution_run_id"]
+                    or retriever_source is None
+                    or retriever_source.run_id != event.run_id
+                    or generation_id in activation_generation_ids
+                    or evidence_hash in activation_generation_hashes
+                ):
+                    return False
+                activation_generation_ids.add(generation_id)
+                activation_generation_hashes.add(evidence_hash)
             elif event.event_type == "ActivationResultRecorded":
                 plan_hash = str(payload["plan_hash"])
                 result_hash = str(payload["result_hash"])
