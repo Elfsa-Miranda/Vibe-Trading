@@ -718,6 +718,22 @@ class ResearchEventStore:
                 str(control_refs[0]["relative_path"]),
                 bundle.control_evidence_hash,
             )
+            all_events = self.query_events()
+            event_order = {
+                event.event_hash: index for index, event in enumerate(all_events)
+            }
+            watermark_order = event_order.get(source.eligible_event_watermark, -1)
+            if (
+                watermark_order < 0
+                or event_order.get(control_event.event_hash, -1) <= watermark_order
+                or any(
+                    event_order.get(event_hash, -1) <= watermark_order
+                    for event_hash in control.terminal_event_hashes
+                )
+            ):
+                raise ValueError(
+                    "retriever v4 discovery watermark includes control evidence"
+                )
             official_ids = tuple(str(item["candidate_id"]) for item in control.candidates)
             if (
                 official_ids != source.official_candidate_ids
@@ -1182,7 +1198,7 @@ class ResearchEventStore:
             self._validate_retriever_v2_transition(conn, payload)
             control = conn.execute(
                 """
-                SELECT run_id, payload FROM research_events
+                SELECT seq, run_id, payload FROM research_events
                 WHERE event_type = 'OfficialSearchControlRecorded'
                 AND event_hash = ?
                 """,
@@ -1191,6 +1207,38 @@ class ResearchEventStore:
             if control is None:
                 raise EventTransitionError("retriever v4 lacks prior official control")
             control_payload = json.loads(str(control["payload"]))
+            watermark = conn.execute(
+                "SELECT seq FROM research_events WHERE event_hash = ?",
+                (payload["eligible_event_watermark"],),
+            ).fetchone()
+            if watermark is None or int(watermark["seq"]) >= int(control["seq"]):
+                raise EventTransitionError(
+                    "retriever v4 discovery watermark must precede its control evidence"
+                )
+            control_terminal_rows = conn.execute(
+                """
+                SELECT seq, event_hash FROM research_events
+                WHERE event_type = 'TrialTerminated'
+                """
+            ).fetchall()
+            terminal_seq_by_hash = {
+                str(row["event_hash"]): int(row["seq"])
+                for row in control_terminal_rows
+            }
+            cited_control_terminals = tuple(
+                str(item) for item in control_payload["terminal_event_hashes"]
+            )
+            if (
+                len(cited_control_terminals) != len(set(cited_control_terminals))
+                or any(
+                    terminal_seq_by_hash.get(event_hash, -1)
+                    <= int(watermark["seq"])
+                    for event_hash in cited_control_terminals
+                )
+            ):
+                raise EventTransitionError(
+                    "retriever v4 discovery watermark includes control-arm outcomes"
+                )
             if (
                 str(control["run_id"]) != draft.run_id
                 or control_payload["evidence_hash"] != payload["control_evidence_hash"]
