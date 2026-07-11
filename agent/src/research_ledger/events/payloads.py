@@ -112,6 +112,12 @@ def _positive_finite_number(value: Any, path: str) -> None:
         raise EventValidationError(f"{path} must be positive")
 
 
+def _nonnegative_finite_number(value: Any, path: str) -> None:
+    _finite_number(value, path)
+    if float(value) < 0.0:
+        raise EventValidationError(f"{path} must be non-negative")
+
+
 def _boolean(value: Any, path: str) -> None:
     if not isinstance(value, bool):
         raise EventValidationError(f"{path} must be boolean")
@@ -685,6 +691,26 @@ _PAYLOAD_SPECS: dict[str, PayloadSpec] = {
             "quality_decision_event_hashes": _unique_hash_list,
             "source_failure_codes": _reason_codes,
             "source_complete": _boolean,
+            "artifact_refs": _artifact_list,
+        },
+    ),
+    "ActivationResourceMeasured": PayloadSpec(
+        "activation_resource_measured.v1",
+        {
+            "resource_id": _string,
+            "plan_hash": _hash,
+            "pair_id": _string,
+            "run_group_id": _string,
+            "arm": _enum("control", "treatment"),
+            "manifest_hash": _hash,
+            "measurement_policy_hash": _hash,
+            "wall_seconds": _nonnegative_finite_number,
+            "cpu_seconds": _nonnegative_finite_number,
+            "peak_rss_mb": _nullable_finite_number,
+            "peak_rss_method": _enum("unavailable_without_isolated_worker.v1"),
+            "source_failure_codes": _reason_codes,
+            "source_complete": _boolean,
+            "evidence_hash": _hash,
             "artifact_refs": _artifact_list,
         },
     ),
@@ -1500,6 +1526,28 @@ def _validate_cross_field_rules(event_type: str, payload: Mapping[str, Any]) -> 
         raise EventValidationError(
             "official control terminals must cover every generated candidate"
         )
+    if event_type == "ActivationResourceMeasured" and (
+        payload["peak_rss_mb"] is not None
+        or payload["source_complete"]
+        or payload["source_failure_codes"]
+        != [
+            "ARM_ORDER_NOT_COUNTERBALANCED",
+            "EXECUTOR_TIMEOUT_NOT_ENFORCED",
+            "PEAK_RSS_ISOLATED_MEASUREMENT_UNAVAILABLE",
+        ]
+    ):
+        raise EventValidationError(
+            "Activation resource v1 must retain all runner limitations"
+        )
+    if event_type == "ActivationResourceMeasured":
+        expected_resource_id = (
+            "activation-resource-v1-"
+            + str(payload["evidence_hash"]).removeprefix("sha256:")[:24]
+        )
+        if payload["resource_id"] != expected_resource_id:
+            raise EventValidationError(
+                "Activation resource identity must derive from its evidence hash"
+            )
     if event_type == "FinalCandidateFrozen":
         candidate_content = {
             "schema_version": payload["candidate_schema_version"],
