@@ -83,6 +83,7 @@ class RetrieverDecisionV4Service:
         control_evidence_event_hash: str,
         candidates: tuple[RetrievalCandidate, ...],
         data_snapshot_hash: str,
+        eligible_event_watermark: str,
         seed: int,
         candidate_budget: int,
         run_id: str,
@@ -92,12 +93,18 @@ class RetrieverDecisionV4Service:
             run_id=run_id,
             data_snapshot_hash=data_snapshot_hash,
         )
+        self._assert_pre_control_watermark(
+            eligible_event_watermark,
+            control_event=control_event,
+            control=control,
+        )
         official_candidate_ids = tuple(
             str(item["candidate_id"]) for item in control.candidates
         )
-        discovery = self.projector.project(
+        discovery = self.projector.project_at_watermark(
             self.store,
             data_snapshot_hash=data_snapshot_hash,
+            watermark_event_hash=eligible_event_watermark,
         )
         query = FactorDAGQuery(discovery.factual.dag)
         v3_input = RetrieverInputBundleV3.build(
@@ -150,6 +157,30 @@ class RetrieverDecisionV4Service:
             )
         )
         return RecordedRetrieverDecisionV4(event, decision, bundle, control)
+
+    def _assert_pre_control_watermark(
+        self,
+        watermark_event_hash: str,
+        *,
+        control_event: ResearchEventEnvelope,
+        control: OfficialSearchControlEvidenceV1,
+    ) -> None:
+        events = self.store.query_events()
+        order = {event.event_hash: index for index, event in enumerate(events)}
+        if watermark_event_hash not in order:
+            raise ValueError("retriever v4 discovery watermark is unknown")
+        watermark_order = order[watermark_event_hash]
+        if order.get(control_event.event_hash, -1) <= watermark_order:
+            raise ValueError(
+                "retriever v4 discovery watermark must precede control evidence"
+            )
+        if any(
+            order.get(event_hash, -1) <= watermark_order
+            for event_hash in control.terminal_event_hashes
+        ):
+            raise ValueError(
+                "retriever v4 discovery watermark includes control-arm outcomes"
+            )
 
     def _control_evidence(
         self,

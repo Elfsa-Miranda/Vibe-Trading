@@ -13,7 +13,10 @@ from src.alpha_foundry.search_lifecycle import (
     SearchEvaluationOutcome,
 )
 from src.alpha_foundry.seed_bank import AlphaSeed, SeedBank
-from src.research_ledger.events import EventDraft, EventValidationError
+from src.research_ledger.events import (
+    EventDraft,
+    EventValidationError,
+)
 from src.research_ledger.hash_utils import canonical_json_hash
 from test_retriever_shadow import _candidate, _views
 from test_search_lifecycle import _semantics
@@ -25,6 +28,16 @@ class _SkipEvaluator:
             status="skip",
             decision="none",
             reason_codes=("CONTROL_V4_FIXTURE",),
+        )
+
+
+class _SuccessEvaluator:
+    def evaluate(self, *, trial_id, **kwargs):
+        return SearchEvaluationOutcome(
+            status="success",
+            decision="candidate_zoo",
+            scorecard_hash=canonical_json_hash({"scorecard": trial_id}),
+            reason_codes=("CONTROL_V4_SUCCESS_FIXTURE",),
         )
 
 
@@ -52,6 +65,7 @@ def _record(tmp_path: Path):
         control_evidence_event_hash=control.event.event_hash,
         candidates=(candidate,),
         data_snapshot_hash=discovery.data_snapshot_hash,
+        eligible_event_watermark=discovery.source_watermark,
         seed=41,
         candidate_budget=1,
         run_id=run_id,
@@ -60,13 +74,54 @@ def _record(tmp_path: Path):
 
 
 def test_v4_binds_replayed_control_event_and_topology_decision(tmp_path: Path) -> None:
-    store, _, control, candidate, recorded = _record(tmp_path)
+    store, discovery, control, candidate, recorded = _record(tmp_path)
     assert recorded.event.event_type == "RetrieverDecisionV4Recorded"
     assert recorded.event.payload["control_evidence_event_hash"] == control.event.event_hash
     assert recorded.event.payload["control_policy_hash"] == control.evidence.policy.policy_hash
     assert recorded.decision.official_output_hash == control.evidence.output_hash
     assert recorded.decision.selected_factor_spec_ids == (candidate.factor_spec_id,)
+    assert recorded.decision.eligible_event_watermark == discovery.source_watermark
     assert store.verify_chain()
+
+
+def test_v4_rejects_watermark_that_contains_same_pair_control_outcomes(
+    tmp_path: Path,
+) -> None:
+    store, query, discovery = _views(tmp_path)
+    run_id = "retriever-v4-leaked-control-run"
+    lifecycle = EventSourcedSearchLifecycle(
+        store=store,
+        flags=store.flags,
+        semantics=_semantics(),
+        evaluator=_SuccessEvaluator(),
+        data_snapshot_hash=discovery.data_snapshot_hash,
+    )
+    search = AlphaFoundrySearch(
+        seed_bank=SeedBank(
+            [AlphaSeed("leaked-control-seed", "delay(volume, 7)", "registry")]
+        ),
+        mutator=SeedMutator(max_candidates_per_seed=1),
+        max_candidates=1,
+        trial_budget=1,
+        lifecycle=lifecycle,
+        run_id=run_id,
+    )
+    control = OfficialSearchControlServiceV1(store).record(search, search.generate())
+    leaked_watermark = next(
+        event.event_hash
+        for event in reversed(store.query_events(event_type="TrialTerminated"))
+        if event.run_id == run_id
+    )
+    with pytest.raises(ValueError, match="includes control-arm outcomes"):
+        RetrieverDecisionV4Service(store).record(
+            control_evidence_event_hash=control.event.event_hash,
+            candidates=(_candidate(query, discovery),),
+            data_snapshot_hash=discovery.data_snapshot_hash,
+            eligible_event_watermark=leaked_watermark,
+            seed=41,
+            candidate_budget=1,
+            run_id=run_id,
+        )
 
 
 def test_v4_accepts_no_caller_official_candidate_ids(tmp_path: Path) -> None:
@@ -75,6 +130,19 @@ def test_v4_accepts_no_caller_official_candidate_ids(tmp_path: Path) -> None:
         RetrieverDecisionV4Service(store).record(  # type: ignore[call-arg]
             control_evidence_event_hash=canonical_json_hash({"control": "missing"}),
             official_candidate_ids=("caller",),
+            candidates=(_candidate(query, discovery),),
+            data_snapshot_hash=discovery.data_snapshot_hash,
+            seed=1,
+            candidate_budget=1,
+            run_id="caller-run",
+        )
+
+
+def test_v4_requires_explicit_frozen_discovery_watermark(tmp_path: Path) -> None:
+    store, query, discovery = _views(tmp_path)
+    with pytest.raises(TypeError):
+        RetrieverDecisionV4Service(store).record(  # type: ignore[call-arg]
+            control_evidence_event_hash=canonical_json_hash({"control": "missing"}),
             candidates=(_candidate(query, discovery),),
             data_snapshot_hash=discovery.data_snapshot_hash,
             seed=1,
