@@ -67,6 +67,9 @@ _EVENT_CAPABILITY_REQUIREMENTS: Mapping[str, tuple[str, ...]] = {
         "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
         "VIBE_TRADING_PROCESS_MEMORY", "VIBE_TRADING_TOPOLOGY_RETRIEVER",
     ),
+    "OfficialSearchControlRecorded": (
+        "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_RESEARCH_EVENTS",
+    ),
     "ActivationPlanRegistered": (
         "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
         "VIBE_TRADING_PROCESS_MEMORY", "VIBE_TRADING_TOPOLOGY_RETRIEVER",
@@ -280,6 +283,7 @@ class ResearchEventStore:
         self._validate_external_retriever_evidence(draft.event_type, payload)
         self._validate_external_quality_decision_evidence(draft.event_type, payload)
         self._validate_external_activation_source_audit(draft.event_type, payload)
+        self._validate_external_official_control_evidence(draft.event_type, payload)
         self._validate_factor_definition_identity(draft.event_type, payload)
         self._validate_registry_bootstrap_identity(draft.event_type, payload)
         payload_hash = canonical_json_hash(payload)
@@ -491,6 +495,7 @@ class ResearchEventStore:
             "RetrieverDecisionRecorded": "decision_id",
             "RetrieverDecisionV2Recorded": "decision_id",
             "RetrieverDecisionV3Recorded": "decision_id",
+            "OfficialSearchControlRecorded": "control_id",
             "ActivationPlanRegistered": "experiment_id",
             "ActivationRunRecorded": "manifest_id",
             "ActivationRunSourceAudited": "audit_id",
@@ -772,6 +777,89 @@ class ResearchEventStore:
         if len(summaries) != 1:
             raise EventValidationError("Activation source audit lacks one prior run summary")
 
+    def _validate_external_official_control_evidence(
+        self,
+        event_type: str,
+        payload: Mapping[str, Any],
+    ) -> None:
+        if event_type != "OfficialSearchControlRecorded":
+            return
+        references = [
+            reference for reference in payload["artifact_refs"]
+            if reference["media_type"]
+            == "application/vnd.vibe.official-search-control-v1+json"
+        ]
+        if len(references) != 1:
+            raise EventValidationError("official control requires one source artifact")
+        try:
+            from src.alpha_foundry.control_evidence import (
+                OfficialSearchControlArtifactStoreV1,
+            )
+
+            artifact_store = OfficialSearchControlArtifactStoreV1(self.artifact_root)
+            evidence = artifact_store.read(
+                str(references[0]["relative_path"]),
+                str(payload["evidence_hash"]),
+            )
+        except (KeyError, OSError, TypeError, ValueError) as exc:
+            raise EventValidationError("official control source cannot be replayed") from exc
+        expected = {
+            "evidence_hash": evidence.evidence_hash,
+            "policy_hash": evidence.policy.policy_hash,
+            "output_hash": evidence.output_hash,
+            "search_run_id": evidence.run_id,
+            "data_snapshot_hash": evidence.data_snapshot_hash,
+            "candidate_count": len(evidence.candidates),
+            "terminal_event_hashes": list(evidence.terminal_event_hashes),
+        }
+        if any(payload[name] != value for name, value in expected.items()):
+            raise EventValidationError("official control event differs from source artifact")
+        events = self.query_events()
+        indexes = {event.event_hash: index for index, event in enumerate(events)}
+        terminals: list[ResearchEventEnvelope] = []
+        for event_hash in evidence.terminal_event_hashes:
+            matches = [
+                event for event in events
+                if event.event_hash == event_hash
+                and event.event_type == "TrialTerminated"
+                and event.run_id == evidence.run_id
+            ]
+            if len(matches) != 1:
+                raise EventValidationError("official control terminal source is missing")
+            terminals.append(matches[0])
+        terminals.sort(key=lambda event: indexes[event.event_hash])
+        starts = {
+            str(event.payload["trial_id"]): event
+            for event in events
+            if event.event_type == "TrialStarted" and event.run_id == evidence.run_id
+        }
+        for attempt_index, (candidate, terminal) in enumerate(
+            zip(evidence.candidates, terminals, strict=True), start=1
+        ):
+            expected_trial_hash = canonical_json_hash(
+                {
+                    "schema_version": "event_sourced_search_trial_id.v1",
+                    "run_id": evidence.run_id,
+                    "attempt_index": attempt_index,
+                    "candidate_id": candidate["candidate_id"],
+                    "formula_hash": candidate["formula_hash"],
+                    "data_snapshot_hash": evidence.data_snapshot_hash,
+                }
+            )
+            expected_trial_id = (
+                "trial-search-" + expected_trial_hash.removeprefix("sha256:")[:24]
+            )
+            trial_id = str(terminal.payload["trial_id"])
+            start = starts.get(trial_id)
+            if (
+                trial_id != expected_trial_id
+                or start is None
+                or start.payload["candidate_id"] != candidate["candidate_id"]
+            ):
+                raise EventValidationError(
+                    "official control trial order or snapshot binding is invalid"
+                )
+
     @staticmethod
     def _validate_factor_definition_identity(
         event_type: str, payload: Mapping[str, Any]
@@ -931,6 +1019,14 @@ class ResearchEventStore:
             return
         if event_type == "RetrieverDecisionV3Recorded":
             self._validate_retriever_v2_transition(conn, payload)
+            return
+        if event_type == "OfficialSearchControlRecorded":
+            prior = conn.execute(
+                "SELECT 1 FROM research_events WHERE event_type = 'OfficialSearchControlRecorded' AND entity_id = ?",
+                (payload["control_id"],),
+            ).fetchone()
+            if prior is not None:
+                raise EventTransitionError("official search control evidence already exists")
             return
         if event_type == "ActivationPlanRegistered":
             prior = conn.execute(
@@ -2055,6 +2151,10 @@ class ResearchEventStore:
                     event.event_type,
                     validated_payload,
                 )
+                self._validate_external_official_control_evidence(
+                    event.event_type,
+                    validated_payload,
+                )
                 if validated_payload != event_dict["payload"]:
                     return False
                 self._validate_draft_identity(
@@ -2136,6 +2236,7 @@ class ResearchEventStore:
         activation_manifest_ids: set[str] = set()
         activation_manifest_hashes: set[str] = set()
         activation_source_audit_ids: set[str] = set()
+        official_control_ids: set[str] = set()
         activation_results: dict[str, Mapping[str, Any]] = {}
         activation_result_plans: set[str] = set()
         activation_decision_plans: set[str] = set()
@@ -2150,6 +2251,11 @@ class ResearchEventStore:
                 if trial_id in started or trial_id in terminated:
                     return False
                 started.add(trial_id)
+            elif event.event_type == "OfficialSearchControlRecorded":
+                control_id = str(payload["control_id"])
+                if control_id in official_control_ids:
+                    return False
+                official_control_ids.add(control_id)
             elif event.event_type == "GenerationFailureRecorded":
                 trial_id = str(payload["trial_id"])
                 if trial_id not in started or trial_id in terminated:

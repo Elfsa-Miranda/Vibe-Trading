@@ -607,6 +607,20 @@ _PAYLOAD_SPECS: dict[str, PayloadSpec] = {
             "artifact_refs": _artifact_list,
         },
     ),
+    "OfficialSearchControlRecorded": PayloadSpec(
+        "official_search_control_recorded.v1",
+        {
+            "control_id": _string,
+            "evidence_hash": _hash,
+            "policy_hash": _hash,
+            "output_hash": _hash,
+            "search_run_id": _string,
+            "data_snapshot_hash": _hash,
+            "candidate_count": _positive_integer,
+            "terminal_event_hashes": _nonempty_hash_list,
+            "artifact_refs": _artifact_list,
+        },
+    ),
     "ActivationPlanRegistered": PayloadSpec(
         "activation_plan_registered.v1",
         {
@@ -1410,6 +1424,12 @@ def _validate_cross_field_rules(event_type: str, payload: Mapping[str, Any]) -> 
             raise EventValidationError(
                 "Activation source v2 must retain its unavailable production sources"
             )
+    if event_type == "OfficialSearchControlRecorded" and (
+        payload["candidate_count"] != len(payload["terminal_event_hashes"])
+    ):
+        raise EventValidationError(
+            "official control terminals must cover every generated candidate"
+        )
     if event_type == "FinalCandidateFrozen":
         candidate_content = {
             "schema_version": payload["candidate_schema_version"],
