@@ -300,6 +300,17 @@ class RetrievalCandidate:
             for panel in self.reference_panels
         ):
             raise ValueError("retrieval output panels must share snapshot and scope")
+        if len(self.reference_panels) != len(self.reference_asts):
+            raise ValueError(
+                "retrieval numerical and structural reference pools must align"
+            )
+        if (
+            self.semantic.candidate_vector is not None
+            and len(self.semantic.reference_vectors) != len(self.reference_panels)
+        ):
+            raise ValueError(
+                "retrieval numerical, structural, and semantic reference pools must align"
+            )
         if len(self.reference_panels) > _MAX_REFERENCE_ITEMS or len(self.reference_asts) > _MAX_REFERENCE_ITEMS:
             raise ValueError("retrieval reference pool exceeds its resource limit")
         if _ast_node_count(self.canonical_ast) > 1_024 or any(

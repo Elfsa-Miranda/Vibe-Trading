@@ -93,6 +93,7 @@ def _candidate(query: FactorDAGQuery, evidence: DiscoveryEvidenceView, *, missin
         )
     )
     assert node.factor_spec_id == factor_id
+    parent_factor_id = observation.parent_factor_spec_id
     return RetrievalCandidate(
         factor_spec_id=factor_id,
         action_id="shadow-action",
@@ -104,7 +105,9 @@ def _candidate(query: FactorDAGQuery, evidence: DiscoveryEvidenceView, *, missin
         ),
         reference_panels=(
             _panel(
-                "reference", (1.0, 3.0, 2.0, 4.0), evidence.data_snapshot_hash
+                parent_factor_id,
+                (1.0, 3.0, 2.0, 4.0),
+                evidence.data_snapshot_hash,
             ),
         ),
         canonical_ast=ast,
@@ -179,6 +182,29 @@ def test_shadow_decision_is_seeded_deterministic_and_records_propensity(tmp_path
     assert selected_one != selected_two
     assert next(iter(propensity_one.values())) == pytest.approx(0.5)
     assert next(iter(propensity_two.values())) == pytest.approx(0.5)
+
+
+def test_reference_pools_must_align_and_reference_ast_is_authoritative(
+    tmp_path,
+) -> None:
+    _, query, evidence = _views(tmp_path)
+    candidate = _candidate(query, evidence)
+    with pytest.raises(ValueError, match="reference pools must align"):
+        replace(candidate, reference_asts=())
+
+    forged_reference = replace(
+        candidate,
+        reference_asts=(candidate.canonical_ast,),
+    )
+    with pytest.raises(ValueError, match="reference AST does not match"):
+        ShadowRetriever(flags=_flags()).decide(
+            official_candidate_ids=(),
+            evidence=evidence,
+            query=query,
+            candidates=(forged_reference,),
+            seed=1,
+            candidate_budget=1,
+        )
 
 
 def test_only_matching_negative_memory_vetoes_and_positive_is_bounded(tmp_path) -> None:

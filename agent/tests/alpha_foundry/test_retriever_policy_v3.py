@@ -185,6 +185,7 @@ def test_v3_shadow_decision_commits_full_policy_but_v2_recorder_rejects_it(tmp_p
     store, query, evidence = _views(tmp_path)
     factor_id = evidence.factual.factor_ids()[0]
     observation = evidence.episodic.observations[0]
+    parent_id = observation.parent_factor_spec_id
     candidate = RetrievalCandidate(
         factor_spec_id=factor_id,
         action_id="v3-shadow-action",
@@ -195,7 +196,7 @@ def test_v3_shadow_decision_commits_full_policy_but_v2_recorder_rejects_it(tmp_p
             factor_id, (1.0, 2.0, 3.0, 4.0), evidence.data_snapshot_hash
         ),
         reference_panels=(
-            _panel("reference", (1.0, 3.0, 2.0, 4.0), evidence.data_snapshot_hash),
+            _panel(parent_id, (1.0, 3.0, 2.0, 4.0), evidence.data_snapshot_hash),
         ),
         canonical_ast=build_expression_identity("zscore(rank(open))").canonical_ast,
         reference_asts=(build_expression_identity("rank(close)").canonical_ast,),

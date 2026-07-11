@@ -74,6 +74,23 @@ class ShadowRetriever:
             node = query.projection.factor_nodes[candidate.factor_spec_id]
             if canonical_json_hash(thaw_canonical_ast(candidate.canonical_ast)) != node.canonical_ast_hash:
                 raise ValueError("retrieval canonical AST does not match the DAG definition")
+            for reference_panel, reference_ast in zip(
+                candidate.reference_panels, candidate.reference_asts
+            ):
+                reference_node = query.projection.factor_nodes.get(
+                    reference_panel.factor_spec_id
+                )
+                if reference_node is None:
+                    raise ValueError(
+                        "retrieval reference factor is absent from the frozen DAG"
+                    )
+                if (
+                    canonical_json_hash(thaw_canonical_ast(reference_ast))
+                    != reference_node.canonical_ast_hash
+                ):
+                    raise ValueError(
+                        "retrieval reference AST does not match the DAG definition"
+                    )
 
         posteriors = {
             (posterior.parent_context_hash, posterior.motif): posterior

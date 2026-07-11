@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -87,6 +88,24 @@ def test_v4_binds_replayed_control_event_and_topology_decision(tmp_path: Path) -
     assert control.event.run_id == "retriever-v4-control-run"
     assert recorded.event.run_id == "retriever-v4-treatment-run"
     assert store.verify_chain()
+
+
+def test_v4_rejects_reference_ast_not_bound_to_reference_factor(
+    tmp_path: Path,
+) -> None:
+    store, discovery, control, candidate, _ = _record(tmp_path)
+    forged = replace(candidate, reference_asts=(candidate.canonical_ast,))
+    with pytest.raises(ValueError, match="reference AST does not match"):
+        RetrieverDecisionV4Service(store).record(
+            control_evidence_event_hash=control.event.event_hash,
+            candidates=(forged,),
+            data_snapshot_hash=discovery.data_snapshot_hash,
+            eligible_event_watermark=discovery.source_watermark,
+            seed=42,
+            candidate_budget=1,
+            control_run_id=control.event.run_id,
+            run_id="retriever-v4-forged-reference-run",
+        )
 
 
 def test_v4_rejects_watermark_that_contains_same_pair_control_outcomes(
