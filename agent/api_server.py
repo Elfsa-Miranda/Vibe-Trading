@@ -305,9 +305,16 @@ def create_app(
     if flags.enabled("VIBE_TRADING_ALPHA_REPORT_API"):
         # The optional module and its routes stay outside the disabled import
         # and OpenAPI surface. Registration still occurs before OpenAPI build.
-        from src.api.alpha_genesis_routes import register_alpha_genesis_routes
+        from src.api.alpha_genesis_routes import (
+            register_alpha_genesis_routes,
+            resolve_report_root,
+        )
 
-        register_alpha_genesis_routes(application, require_auth=require_auth)
+        register_alpha_genesis_routes(
+            application,
+            require_auth=require_auth,
+            report_root=resolve_report_root(settings),
+        )
 
     return application
 
