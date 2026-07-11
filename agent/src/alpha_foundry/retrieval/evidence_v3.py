@@ -394,6 +394,8 @@ class RetrieverInputArtifactStoreV3:
         )
         if not isinstance(payload, Mapping):
             raise ValueError("retriever input artifact must be an object")
+        if canonical_json(payload) != canonical_json(redact_secrets(payload)):
+            raise ValueError("retriever input artifact contains secret or private path data")
         bundle = RetrieverInputBundleV3.from_dict(payload)
         if bundle.bundle_hash != expected_bundle_hash:
             raise ValueError("retriever input artifact identity mismatch")
