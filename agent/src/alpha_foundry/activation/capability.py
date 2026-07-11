@@ -85,6 +85,17 @@ class ActiveRetrieverResolver:
             decision = self.artifact_store.get("decision", decision_hash)
         except (OSError, TypeError, ValueError):
             return RetrieverModeResolution("shadow", "ACTIVATION_ARTIFACT_INVALID")
+        if (
+            result.get("schema_version") != "activation_experiment_result.v2"
+            or decision.get("schema_version") != "retriever_activation_decision.v2"
+            or result.get("run_provenance_schema_version")
+            != "activation_run_source.v2"
+        ):
+            return RetrieverModeResolution(
+                "shadow",
+                "SOURCE_BOUND_ACTIVATION_V2_REQUIRED",
+                decision_hash,
+            )
         if decision.get("verdict") != "approved" or decision.get("active_research_only") is not True:
             return RetrieverModeResolution("shadow", "ACTIVATION_NOT_APPROVED", decision_hash)
         if decision.get("plan_hash") != plan_hash or decision.get("result_hash") != result_hash:
