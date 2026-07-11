@@ -18,6 +18,7 @@ from src.alpha_foundry.activation.run_source_v2 import (
     ActivationRunSourceAuditV2,
     ActivationRunSourceAuditorV2,
 )
+from src.alpha_foundry.activation.resource_v1 import ActivationResourceEvidenceV1
 from src.research_ledger.events import EventDraft, ResearchEventStore
 
 
@@ -124,6 +125,38 @@ class ActivationEvidenceService:
             )
         )
         return audit, relative
+
+    def record_resource_evidence(
+        self,
+        evidence: ActivationResourceEvidenceV1,
+    ) -> str:
+        if not isinstance(evidence, ActivationResourceEvidenceV1):
+            raise TypeError("typed runner-owned Activation resource evidence is required")
+        relative = self.artifacts.put("resource", evidence.to_dict())
+        reference = self._reference("resource", evidence.evidence_hash, relative)
+        reference["media_type"] = "application/vnd.vibe.activation-resource-v1+json"
+        resource_id = (
+            "activation-resource-v1-"
+            + evidence.evidence_hash.removeprefix("sha256:")[:24]
+        )
+        self.event_store.append_event(
+            EventDraft(
+                event_type="ActivationResourceMeasured",
+                entity_id=resource_id,
+                run_id=evidence.run_group_id,
+                payload_schema_version="activation_resource_measured.v1",
+                idempotency_key="activation-resource-v1:" + evidence.evidence_hash,
+                payload={
+                    "resource_id": resource_id,
+                    **{
+                        key: value for key, value in evidence.to_dict().items()
+                        if key != "schema_version"
+                    },
+                    "artifact_refs": [reference],
+                },
+            )
+        )
+        return relative
 
     def finalize(
         self,

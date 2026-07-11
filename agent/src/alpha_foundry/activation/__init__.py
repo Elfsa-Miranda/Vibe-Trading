@@ -29,6 +29,10 @@ from src.alpha_foundry.activation.run_source_v2 import (
     ActivationRunSourceAuditV2,
     ActivationRunSourceAuditorV2,
 )
+from src.alpha_foundry.activation.resource_v1 import (
+    ActivationResourceEvidenceV1,
+    MeasuredActivationPairV1,
+)
 from src.alpha_foundry.activation.service import ActivationEvidenceService
 
 __all__ = [
@@ -37,6 +41,7 @@ __all__ = [
     "ActivationCompatibility", "ActivationDesign", "ActivationExperimentPlan",
     "ActivationExperimentResult", "ActivationProvenance", "ActivationRunManifest",
     "ActivationRunSourceAuditV2", "ActivationRunSourceAuditorV2",
+    "ActivationResourceEvidenceV1", "MeasuredActivationPairV1",
     "ActiveRetrieverCapability", "ActiveRetrieverResolver", "PairedEffect",
     "PairedActivationRunner", "RegisteredActivationPlan", "RetrieverActivationDecision",
     "RetrieverActivationPolicy", "RetrieverModeResolution", "TrainValidActivationScope",

@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Literal, cast
+import time
+from typing import Callable, Literal, cast, TYPE_CHECKING
 
 from src.alpha_foundry.activation.artifacts import ActivationArtifactStore
 from src.alpha_foundry.activation.model import (
     ActivationExperimentPlan,
     ActivationRunManifest,
 )
+
+if TYPE_CHECKING:
+    from src.alpha_foundry.activation.resource_v1 import (
+        ActivationResourceEvidenceV1,
+        MeasuredActivationPairV1,
+    )
 
 
 _REGISTRATION_AUTHORITY = object()
@@ -139,6 +146,88 @@ class PairedActivationRunner:
             self.artifact_store.put("run", manifest.to_dict())
             manifests.append(manifest)
         return manifests[0], manifests[1]
+
+    def run_pair_measured(
+        self,
+        registered: RegisteredActivationPlan,
+        *,
+        run_group_id: str,
+        mechanism_family: str,
+        dag_region: str,
+        executor: ArmExecutor,
+    ) -> "MeasuredActivationPairV1":
+        """Execute both arms while runner-owned clocks measure the executor boundary."""
+        from src.alpha_foundry.activation.resource_v1 import (
+            MeasuredActivationPairV1,
+            _mint_resource_evidence,
+        )
+
+        if (
+            not isinstance(registered, RegisteredActivationPlan)
+            or registered._authority is not _REGISTRATION_AUTHORITY
+        ):
+            raise TypeError("formal outcomes require a registered immutable plan")
+        plan = registered.plan
+        if plan.phase != "confirmatory":
+            raise ValueError("pilot plans cannot produce a confirmatory pair")
+        if run_group_id not in plan.design.run_group_ids:
+            raise ValueError("run group is outside the fixed stopping set")
+        if run_group_id in plan.design.pilot_excluded_run_group_ids:
+            raise ValueError("pilot run group is permanently excluded")
+        if (
+            mechanism_family not in plan.design.mechanism_families
+            or dag_region not in plan.design.dag_regions
+        ):
+            raise ValueError("pair stratum is not preregistered")
+        index = plan.design.run_group_ids.index(run_group_id)
+        scope = TrainValidActivationScope(
+            train_snapshot_hash=plan.provenance.train_snapshot_hash,
+            valid_snapshot_hash=plan.provenance.valid_snapshot_hash,
+            discovery_chain_head=plan.provenance.eligible_event_chain_head,
+            _authority=_SCOPE_AUTHORITY,
+        )
+        manifests: list[ActivationRunManifest] = []
+        resources: list[ActivationResourceEvidenceV1] = []
+        for arm, policy_hash in (
+            ("control", plan.provenance.control_policy_hash),
+            ("treatment", plan.provenance.treatment_policy_hash),
+        ):
+            request = ActivationArmRequest(
+                plan_hash=plan.plan_hash,
+                pair_id=f"{run_group_id}:{mechanism_family}:{dag_region}",
+                run_group_id=run_group_id,
+                arm=cast(Literal["control", "treatment"], arm),
+                seed=plan.design.seeds[index],
+                mechanism_family=mechanism_family,
+                dag_region=dag_region,
+                policy_hash=policy_hash,
+                rng_namespace=f"{plan.plan_hash}:{run_group_id}:{arm}:rng",
+                cache_namespace=f"{plan.plan_hash}:{run_group_id}:{arm}:cache",
+                candidate_budget=plan.design.candidate_budget,
+                compute_budget=plan.design.compute_budget,
+            )
+            wall_start = time.perf_counter()
+            cpu_start = time.process_time()
+            manifest = executor(request, scope)
+            cpu_seconds = time.process_time() - cpu_start
+            wall_seconds = time.perf_counter() - wall_start
+            self._validate_response(request, manifest)
+            resource = _mint_resource_evidence(
+                request=request,
+                manifest=manifest,
+                wall_seconds=wall_seconds,
+                cpu_seconds=cpu_seconds,
+            )
+            self.artifact_store.put("run", manifest.to_dict())
+            self.artifact_store.put("resource", resource.to_dict())
+            manifests.append(manifest)
+            resources.append(resource)
+        return MeasuredActivationPairV1(
+            control=manifests[0],
+            treatment=manifests[1],
+            control_resource=resources[0],
+            treatment_resource=resources[1],
+        )
 
     @staticmethod
     def _validate_response(
