@@ -185,6 +185,7 @@ def test_treatment_generator_consumes_parent_but_fails_closed_on_v4_inputs(
     evidence = holder["generated"].evidence
     assert evidence.source_complete is False
     assert evidence.source_failure_codes == (
+        "RETRIEVER_ACTION_SOURCE_UNVERIFIED",
         "RETRIEVER_FEATURE_SOURCE_UNVERIFIED",
     )
     assert evidence.selected_parent_factor_spec_ids == (candidate.factor_spec_id,)

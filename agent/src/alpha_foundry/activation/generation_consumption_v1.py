@@ -253,9 +253,14 @@ class ActivationTreatmentGeneratorV1:
         # RetrieverInputBundleV4 content-addresses caller-supplied panels,
         # embeddings, base scores, and cost hashes, but cannot independently
         # reproduce them from the frozen data snapshot and registered providers.
+        # ProcessActionFrozenV2 also has no pre-generation motif/template field,
+        # so action_id, context, and motif cannot be source-bound before the edit.
         # The search may be replayed to prove selected-parent consumption, but
         # that is not sufficient to make its treatment source activation-eligible.
-        failures: set[str] = {"RETRIEVER_FEATURE_SOURCE_UNVERIFIED"}
+        failures: set[str] = {
+            "RETRIEVER_ACTION_SOURCE_UNVERIFIED",
+            "RETRIEVER_FEATURE_SOURCE_UNVERIFIED",
+        }
         if len(result.attempts) != len(result.candidates):
             failures.add("TERMINAL_ATTEMPT_COVERAGE_INCOMPLETE")
         records = tuple(
