@@ -75,6 +75,10 @@ _EVENT_CAPABILITY_REQUIREMENTS: Mapping[str, tuple[str, ...]] = {
         "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
         "VIBE_TRADING_PROCESS_MEMORY", "VIBE_TRADING_TOPOLOGY_RETRIEVER",
     ),
+    "ActivationRunSourceAudited": (
+        "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
+        "VIBE_TRADING_PROCESS_MEMORY", "VIBE_TRADING_TOPOLOGY_RETRIEVER",
+    ),
     "ActivationResultRecorded": (
         "VIBE_TRADING_ALPHA_FOUNDRY", "VIBE_TRADING_FACTOR_DAG",
         "VIBE_TRADING_PROCESS_MEMORY", "VIBE_TRADING_TOPOLOGY_RETRIEVER",
@@ -275,6 +279,7 @@ class ResearchEventStore:
         self._validate_external_process_evidence(draft.event_type, payload)
         self._validate_external_retriever_evidence(draft.event_type, payload)
         self._validate_external_quality_decision_evidence(draft.event_type, payload)
+        self._validate_external_activation_source_audit(draft.event_type, payload)
         self._validate_factor_definition_identity(draft.event_type, payload)
         self._validate_registry_bootstrap_identity(draft.event_type, payload)
         payload_hash = canonical_json_hash(payload)
@@ -488,6 +493,7 @@ class ResearchEventStore:
             "RetrieverDecisionV3Recorded": "decision_id",
             "ActivationPlanRegistered": "experiment_id",
             "ActivationRunRecorded": "manifest_id",
+            "ActivationRunSourceAudited": "audit_id",
             "ActivationResultRecorded": "result_id",
             "RetrieverActivationDecisionRecorded": "activation_decision_id",
             "FalsificationContractRegistered": "contract_id",
@@ -694,6 +700,78 @@ class ResearchEventStore:
         if any(payload[name] != value for name, value in expected.items()):
             raise EventValidationError("Decision v3 differs from deterministic rebuild")
 
+    def _validate_external_activation_source_audit(
+        self,
+        event_type: str,
+        payload: Mapping[str, Any],
+    ) -> None:
+        if event_type != "ActivationRunSourceAudited":
+            return
+        references = [
+            reference for reference in payload["artifact_refs"]
+            if reference["media_type"]
+            == "application/vnd.vibe.activation-run-source-v2+json"
+        ]
+        if len(references) != 1:
+            raise EventValidationError("Activation source audit requires one v2 artifact")
+        try:
+            from src.alpha_foundry.activation.artifacts import ActivationArtifactStore
+            from src.alpha_foundry.activation.run_source_v2 import (
+                ActivationRunSourceAuditV2,
+            )
+
+            raw = ActivationArtifactStore(self.artifact_root).get(
+                "run_source", str(payload["audit_hash"])
+            )
+            expected_relative = ActivationArtifactStore.relative_path(
+                "run_source", str(payload["audit_hash"])
+            )
+            if str(references[0]["relative_path"]).replace("\\", "/") != expected_relative:
+                raise ValueError("Activation source audit reference path is not canonical")
+            audit = ActivationRunSourceAuditV2.from_dict(raw)
+        except (KeyError, OSError, TypeError, ValueError) as exc:
+            raise EventValidationError("Activation source audit artifact is invalid") from exc
+        expected = {
+            "plan_hash": audit.plan_hash,
+            "summary_manifest_hash": audit.summary_manifest_hash,
+            "source_watermark_event_hash": audit.source_watermark_event_hash,
+            "audit_hash": audit.audit_hash,
+            "retriever_decision_event_hashes": list(
+                audit.retriever_decision_event_hashes
+            ),
+            "terminal_event_hashes": list(audit.terminal_event_hashes),
+            "evaluation_event_hashes": list(audit.evaluation_event_hashes),
+            "quality_decision_event_hashes": list(
+                audit.quality_decision_event_hashes
+            ),
+            "source_failure_codes": list(audit.source_failure_codes),
+            "source_complete": audit.source_complete,
+        }
+        if any(payload[name] != value for name, value in expected.items()):
+            raise EventValidationError("Activation source audit event differs from artifact")
+        events = self.query_events()
+        indexes = {event.event_hash: index for index, event in enumerate(events)}
+        watermark_index = indexes.get(audit.source_watermark_event_hash)
+        source_hashes = (
+            audit.retriever_decision_event_hashes
+            + audit.terminal_event_hashes
+            + audit.evaluation_event_hashes
+            + audit.quality_decision_event_hashes
+        )
+        if watermark_index is None or any(
+            indexes.get(event_hash, watermark_index + 1) > watermark_index
+            for event_hash in source_hashes
+        ):
+            raise EventValidationError("Activation source audit cites an invalid watermark")
+        summaries = [
+            event for event in events
+            if event.event_type == "ActivationRunRecorded"
+            and event.payload["manifest_hash"] == audit.summary_manifest_hash
+            and event.payload["plan_hash"] == audit.plan_hash
+        ]
+        if len(summaries) != 1:
+            raise EventValidationError("Activation source audit lacks one prior run summary")
+
     @staticmethod
     def _validate_factor_definition_identity(
         event_type: str, payload: Mapping[str, Any]
@@ -864,6 +942,9 @@ class ResearchEventStore:
             return
         if event_type == "ActivationRunRecorded":
             self._validate_activation_run_transition(conn, payload)
+            return
+        if event_type == "ActivationRunSourceAudited":
+            self._validate_activation_source_transition(conn, payload)
             return
         if event_type == "ActivationResultRecorded":
             self._validate_activation_result_transition(conn, payload)
@@ -1249,6 +1330,37 @@ class ResearchEventStore:
         ).fetchone()
         if result is not None:
             raise EventTransitionError("activation run cannot append after its frozen result")
+
+    @classmethod
+    def _validate_activation_source_transition(
+        cls,
+        conn: sqlite3.Connection,
+        payload: Mapping[str, Any],
+    ) -> None:
+        cls._activation_plan_payload(conn, str(payload["plan_hash"]))
+        summary = conn.execute(
+            """
+            SELECT 1 FROM research_events
+            WHERE event_type = 'ActivationRunRecorded'
+            AND json_extract(payload, '$.manifest_hash') = ?
+            AND json_extract(payload, '$.plan_hash') = ?
+            """,
+            (payload["summary_manifest_hash"], payload["plan_hash"]),
+        ).fetchone()
+        if summary is None:
+            raise EventTransitionError("Activation source audit has no prior run summary")
+        prior = conn.execute(
+            "SELECT 1 FROM research_events WHERE event_type = 'ActivationRunSourceAudited' AND entity_id = ?",
+            (payload["audit_id"],),
+        ).fetchone()
+        if prior is not None:
+            raise EventTransitionError("Activation run source audit already exists")
+        result = conn.execute(
+            "SELECT 1 FROM research_events WHERE event_type = 'ActivationResultRecorded' AND json_extract(payload, '$.plan_hash') = ?",
+            (payload["plan_hash"],),
+        ).fetchone()
+        if result is not None:
+            raise EventTransitionError("Activation source audit cannot append after result")
 
     @classmethod
     def _validate_activation_result_transition(
@@ -1939,6 +2051,10 @@ class ResearchEventStore:
                     event.event_type,
                     validated_payload,
                 )
+                self._validate_external_activation_source_audit(
+                    event.event_type,
+                    validated_payload,
+                )
                 if validated_payload != event_dict["payload"]:
                     return False
                 self._validate_draft_identity(
@@ -2018,6 +2134,8 @@ class ResearchEventStore:
         activation_experiments: set[str] = set()
         activation_runs: dict[str, list[Mapping[str, Any]]] = {}
         activation_manifest_ids: set[str] = set()
+        activation_manifest_hashes: set[str] = set()
+        activation_source_audit_ids: set[str] = set()
         activation_results: dict[str, Mapping[str, Any]] = {}
         activation_result_plans: set[str] = set()
         activation_decision_plans: set[str] = set()
@@ -2250,7 +2368,20 @@ class ResearchEventStore:
                 ):
                     return False
                 activation_manifest_ids.add(manifest_id)
+                activation_manifest_hashes.add(str(payload["manifest_hash"]))
                 activation_runs[plan_hash].append(payload)
+            elif event.event_type == "ActivationRunSourceAudited":
+                plan_hash = str(payload["plan_hash"])
+                audit_id = str(payload["audit_id"])
+                if (
+                    plan_hash not in activation_plans
+                    or plan_hash in activation_result_plans
+                    or str(payload["summary_manifest_hash"])
+                    not in activation_manifest_hashes
+                    or audit_id in activation_source_audit_ids
+                ):
+                    return False
+                activation_source_audit_ids.add(audit_id)
             elif event.event_type == "ActivationResultRecorded":
                 plan_hash = str(payload["plan_hash"])
                 result_hash = str(payload["result_hash"])

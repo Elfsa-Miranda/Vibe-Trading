@@ -10,10 +10,11 @@ from src.alpha_foundry.artifacts import safe_artifact_path, safe_artifact_write_
 from src.research_ledger.hash_utils import canonical_json, canonical_json_hash, redact_secrets
 
 
-ArtifactKind = Literal["plan", "run", "result", "decision"]
+ArtifactKind = Literal["plan", "run", "run_source", "result", "decision"]
 _HASH_FIELD = {
     "plan": "plan_hash",
     "run": "manifest_hash",
+    "run_source": "audit_hash",
     "result": "result_hash",
     "decision": "decision_hash",
 }
@@ -48,7 +49,19 @@ class ActivationArtifactStore:
         def reject_constant(value: str) -> None:
             raise ValueError(f"non-finite JSON constant is forbidden: {value}")
 
-        payload = json.loads(raw, parse_constant=reject_constant)
+        def reject_duplicates(items: list[tuple[str, Any]]) -> dict[str, Any]:
+            result: dict[str, Any] = {}
+            for key, value in items:
+                if key in result:
+                    raise ValueError("duplicate activation artifact key")
+                result[key] = value
+            return result
+
+        payload = json.loads(
+            raw,
+            parse_constant=reject_constant,
+            object_pairs_hook=reject_duplicates,
+        )
         if not isinstance(payload, dict):
             raise ValueError("activation artifact must contain one JSON object")
         hash_field = _HASH_FIELD[kind]

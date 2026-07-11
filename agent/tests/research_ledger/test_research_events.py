@@ -182,6 +182,7 @@ def test_closed_payload_registry_covers_every_required_event_type() -> None:
         "RetrieverDecisionV3Recorded",
         "ActivationPlanRegistered",
         "ActivationRunRecorded",
+        "ActivationRunSourceAudited",
         "ActivationResultRecorded",
         "RetrieverActivationDecisionRecorded",
         "FalsificationContractRegistered",
@@ -450,7 +451,7 @@ def test_every_registered_payload_schema_validates_a_complete_production_shape()
                 "registered_at": timestamp,
                 "artifact_refs": [],
             },
-            "ActivationRunRecorded": {
+        "ActivationRunRecorded": {
                 "manifest_id": "activation-run-1",
                 "plan_hash": digest,
                 "manifest_hash": digest,
@@ -553,6 +554,23 @@ def test_every_registered_payload_schema_validates_a_complete_production_shape()
             "contract_id": "contract-1",
             "contract_hash": digest,
             "outcome": "inconclusive",
+            "artifact_refs": [],
+        },
+        "ActivationRunSourceAudited": {
+            "audit_id": "activation-source-v2-1",
+            "plan_hash": digest,
+            "summary_manifest_hash": digest,
+            "source_watermark_event_hash": digest,
+            "audit_hash": digest,
+            "retriever_decision_event_hashes": [],
+            "terminal_event_hashes": [],
+            "evaluation_event_hashes": [],
+            "quality_decision_event_hashes": [],
+            "source_failure_codes": [
+                "QUALITY_DECISION_UPSTREAM_AUTHORITY_UNPROVEN",
+                "RESOURCE_METRICS_SOURCE_UNBOUND",
+            ],
+            "source_complete": False,
             "artifact_refs": [],
         },
         "MechanismEvidenceIndexRecorded": {

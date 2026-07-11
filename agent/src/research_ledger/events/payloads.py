@@ -632,6 +632,23 @@ _PAYLOAD_SPECS: dict[str, PayloadSpec] = {
             "artifact_refs": _artifact_list,
         },
     ),
+    "ActivationRunSourceAudited": PayloadSpec(
+        "activation_run_source_audited.v2",
+        {
+            "audit_id": _string,
+            "plan_hash": _hash,
+            "summary_manifest_hash": _hash,
+            "source_watermark_event_hash": _hash,
+            "audit_hash": _hash,
+            "retriever_decision_event_hashes": _unique_hash_list,
+            "terminal_event_hashes": _unique_hash_list,
+            "evaluation_event_hashes": _unique_hash_list,
+            "quality_decision_event_hashes": _unique_hash_list,
+            "source_failure_codes": _reason_codes,
+            "source_complete": _boolean,
+            "artifact_refs": _artifact_list,
+        },
+    ),
     "ActivationResultRecorded": PayloadSpec(
         "activation_result_recorded.v1",
         {
@@ -1382,6 +1399,17 @@ def _validate_cross_field_rules(event_type: str, payload: Mapping[str, Any]) -> 
         }
         if canonical_json_hash(decision_content) != payload["decision_hash"]:
             raise EventValidationError("Decision v3 hash does not match source-bound content")
+    if event_type == "ActivationRunSourceAudited":
+        required = {
+            "RESOURCE_METRICS_SOURCE_UNBOUND",
+            "QUALITY_DECISION_UPSTREAM_AUTHORITY_UNPROVEN",
+        }
+        if payload["source_complete"] or not required.issubset(
+            payload["source_failure_codes"]
+        ):
+            raise EventValidationError(
+                "Activation source v2 must retain its unavailable production sources"
+            )
     if event_type == "FinalCandidateFrozen":
         candidate_content = {
             "schema_version": payload["candidate_schema_version"],

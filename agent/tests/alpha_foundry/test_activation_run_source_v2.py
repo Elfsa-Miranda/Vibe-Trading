@@ -6,11 +6,13 @@ from pathlib import Path
 import pytest
 
 from src.alpha_foundry.activation import (
+    ActivationArtifactStore,
     ActivationEvidenceService,
     ActivationRunManifest,
     ActivationRunSourceAuditorV2,
 )
 from src.research_ledger.events import EventDraft
+from src.research_ledger.events import EventValidationError
 from src.research_ledger.hash_utils import canonical_json_hash
 from test_activation_retriever import event_store, manifest, plan
 
@@ -170,3 +172,58 @@ def test_terminal_counts_and_candidate_ids_rebuild_from_chain(tmp_path: Path) ->
     assert "TERMINAL_STATUS_SUMMARY_MISMATCH" not in audit.source_failure_codes
     assert "CANDIDATE_ID_SUMMARY_MISMATCH" not in audit.source_failure_codes
     assert audit.source_complete is False
+
+
+def test_source_audit_is_content_addressed_append_only_and_replayable(
+    tmp_path: Path,
+) -> None:
+    frozen = plan()
+    store = event_store(tmp_path)
+    service = ActivationEvidenceService(store)
+    service.register_plan(frozen)
+    summary = manifest(frozen, "group-00", "treatment")
+    service.record_run(summary)
+    audit, relative = service.record_run_source_audit(
+        summary,
+        retriever_decision_event_hashes=(),
+        terminal_event_hashes=(),
+        evaluation_event_hashes=(),
+        quality_decision_event_hashes=(),
+    )
+    events = store.query_events(event_type="ActivationRunSourceAudited")
+    assert len(events) == 1
+    assert events[0].payload["audit_hash"] == audit.audit_hash
+    assert relative.endswith(audit.audit_hash.removeprefix("sha256:") + ".json")
+    assert store.verify_chain()
+    assert store.replay().event_count == 3
+
+    target = store.artifact_root.joinpath(*relative.split("/"))
+    original = target.read_text(encoding="utf-8")
+    duplicate = original.replace(
+        '{"audit_hash"',
+        '{"audit_hash":"sha256:' + "0" * 64 + '","audit_hash"',
+        1,
+    )
+    target.write_text(duplicate, encoding="utf-8")
+    with pytest.raises(ValueError, match="duplicate"):
+        ActivationArtifactStore(store.artifact_root).get("run_source", audit.audit_hash)
+    target.write_text(original, encoding="utf-8")
+
+    payload = events[0].to_dict()["payload"]
+    payload["audit_id"] = "activation-source-v2-forged"
+    payload["source_complete"] = True
+    payload["source_failure_codes"] = []
+    with pytest.raises(EventValidationError, match="unavailable production sources"):
+        store.append_event(
+            EventDraft(
+                event_type="ActivationRunSourceAudited",
+                entity_id="activation-source-v2-forged",
+                run_id="group-00",
+                payload_schema_version="activation_run_source_audited.v2",
+                payload=payload,
+                idempotency_key="activation-source-v2:forged",
+            )
+        )
+
+    target.write_text("{}\n", encoding="utf-8")
+    assert store.verify_chain() is False
