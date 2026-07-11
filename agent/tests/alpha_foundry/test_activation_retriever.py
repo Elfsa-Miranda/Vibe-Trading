@@ -366,7 +366,7 @@ def test_active_flag_without_approved_artifacts_falls_back_to_shadow(tmp_path: P
     assert resolution.mode == "shadow"
 
 
-def test_only_approved_matching_artifacts_enable_research_mode(tmp_path: Path) -> None:
+def test_v1_self_reported_approval_cannot_enable_research_mode(tmp_path: Path) -> None:
     frozen = plan()
     ledger = event_store(tmp_path)
     service = ActivationEvidenceService(ledger)
@@ -390,10 +390,10 @@ def test_only_approved_matching_artifacts_enable_research_mode(tmp_path: Path) -
         result_hash=result.result_hash, decision_hash=decision.decision_hash,
         compatibility=compatibility,
     )
-    assert resolution.mode == "active_research_only"
-    assert ActiveRetrieverCapability(resolution).choose(
-        flat_candidate_ids=("flat",), topology_candidate_ids=("topology",),
-    ) == ("topology",)
+    assert resolution.mode == "shadow"
+    assert resolution.reason == "SOURCE_BOUND_ACTIVATION_V2_REQUIRED"
+    with pytest.raises(TypeError, match="approved compatible evidence"):
+        ActiveRetrieverCapability(resolution)
     mismatch = replace(compatibility, code_hash=h("other-code"))
     assert resolver.resolve(
         flags=enabled_flags(active=True), plan_hash=frozen.plan_hash,
