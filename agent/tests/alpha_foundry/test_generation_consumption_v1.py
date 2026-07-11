@@ -82,7 +82,7 @@ def _manifest(request, snapshot_hash, result) -> ActivationRunManifest:
     )
 
 
-def test_treatment_generator_consumes_v4_selected_parent_in_real_search(
+def test_treatment_generator_consumes_parent_but_fails_closed_on_v4_inputs(
     tmp_path: Path,
 ) -> None:
     store, query, discovery = _views(tmp_path)
@@ -183,8 +183,10 @@ def test_treatment_generator_consumes_v4_selected_parent_in_real_search(
         executor=execute,
     )
     evidence = holder["generated"].evidence
-    assert evidence.source_complete is True
-    assert evidence.source_failure_codes == ()
+    assert evidence.source_complete is False
+    assert evidence.source_failure_codes == (
+        "RETRIEVER_FEATURE_SOURCE_UNVERIFIED",
+    )
     assert evidence.selected_parent_factor_spec_ids == (candidate.factor_spec_id,)
     assert evidence.consumed_parent_factor_spec_ids == (candidate.factor_spec_id,)
     assert len(evidence.generated_candidates) == 3
