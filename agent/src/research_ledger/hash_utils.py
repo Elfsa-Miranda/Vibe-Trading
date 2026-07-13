@@ -48,8 +48,12 @@ def json_safe(value: Any) -> Any:
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
         return json_safe(dataclasses.asdict(value))
     if isinstance(value, dict):
-        return {str(k): json_safe(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple, set)):
+        if any(not isinstance(key, str) for key in value):
+            raise TypeError("canonical JSON requires string dictionary keys")
+        return {key: json_safe(item) for key, item in value.items()}
+    if isinstance(value, set):
+        raise TypeError("canonical JSON does not support sets")
+    if isinstance(value, (list, tuple)):
         return [json_safe(v) for v in value]
     if isinstance(value, (datetime, date, pd.Timestamp)):
         return value.isoformat()
@@ -57,7 +61,9 @@ def json_safe(value: Any) -> Any:
         return json_safe(value.item())
     if isinstance(value, float):
         return value if math.isfinite(value) else None
-    return value
+    if value is None or isinstance(value, (str, int, bool)):
+        return value
+    raise TypeError(f"canonical JSON does not support {type(value).__name__}")
 
 
 def canonical_json(obj: Any, *, exclude_keys: Iterable[str] = ()) -> str:

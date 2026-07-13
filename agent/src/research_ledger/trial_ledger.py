@@ -104,7 +104,8 @@ class TrialLedger:
         return conn
 
     def _init_db(self) -> None:
-        with self._connect() as conn:
+        conn = self._connect()
+        try:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS trial_entries (
@@ -122,46 +123,56 @@ class TrialLedger:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_trial_entries_candidate ON trial_entries(candidate_id)"
             )
+        finally:
+            conn.close()
 
     def append(self, entry: TrialLedgerEntry) -> TrialLedgerEntry:
         last_error: Exception | None = None
         for attempt in range(8):
+            conn: sqlite3.Connection | None = None
             try:
-                with self._connect() as conn:
-                    conn.execute("BEGIN IMMEDIATE")
-                    previous = self._tail_hash(conn)
-                    prepared = entry.with_hashes(previous)
-                    payload = json.dumps(
-                        prepared.to_dict(),
-                        sort_keys=True,
-                        ensure_ascii=False,
-                        allow_nan=False,
-                        separators=(",", ":"),
-                    )
-                    conn.execute(
-                        """
-                        INSERT INTO trial_entries (
-                            trial_id, trial_group_id, candidate_id,
-                            previous_entry_hash, entry_hash, created_at, payload
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            prepared.trial_id,
-                            prepared.trial_group_id,
-                            prepared.candidate_id,
-                            prepared.previous_entry_hash,
-                            prepared.entry_hash,
-                            prepared.created_at,
-                            payload,
-                        ),
-                    )
-                    conn.execute("COMMIT")
-                    return prepared
+                conn = self._connect()
+                conn.execute("BEGIN IMMEDIATE")
+                previous = self._tail_hash(conn)
+                prepared = entry.with_hashes(previous)
+                payload = json.dumps(
+                    prepared.to_dict(),
+                    sort_keys=True,
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    separators=(",", ":"),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO trial_entries (
+                        trial_id, trial_group_id, candidate_id,
+                        previous_entry_hash, entry_hash, created_at, payload
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        prepared.trial_id,
+                        prepared.trial_group_id,
+                        prepared.candidate_id,
+                        prepared.previous_entry_hash,
+                        prepared.entry_hash,
+                        prepared.created_at,
+                        payload,
+                    ),
+                )
+                conn.commit()
+                return prepared
             except sqlite3.OperationalError as exc:
+                if not _is_retryable_operational_error(exc):
+                    raise TrialLedgerAppendError(str(exc)) from exc
                 last_error = exc
                 time.sleep(0.02 * (attempt + 1))
             except sqlite3.IntegrityError as exc:
                 raise TrialLedgerAppendError(str(exc)) from exc
+            finally:
+                if conn is not None:
+                    if conn.in_transaction:
+                        conn.rollback()
+                    conn.close()
         raise TrialLedgerAppendError(f"append failed after retries: {last_error}")
 
     def _tail_hash(self, conn: sqlite3.Connection) -> str | None:
@@ -177,23 +188,49 @@ class TrialLedger:
             sql += " WHERE candidate_id = ?"
             params = (candidate_id,)
         sql += " ORDER BY seq ASC"
-        with self._connect() as conn:
+        conn = self._connect()
+        try:
             rows = conn.execute(sql, params).fetchall()
+        finally:
+            conn.close()
         return [TrialLedgerEntry.from_dict(json.loads(row["payload"])) for row in rows]
 
     def verify_hash_chain(self) -> bool:
         previous: str | None = None
-        for entry in self.query():
-            if entry.previous_entry_hash != previous:
-                return False
-            expected = entry.with_hashes(entry.previous_entry_hash)
-            if expected.entry_hash != entry.entry_hash:
-                return False
-            previous = entry.entry_hash
-        return True
+        try:
+            conn = self._connect()
+            try:
+                rows = conn.execute(
+                    "SELECT previous_entry_hash, entry_hash, payload FROM trial_entries ORDER BY seq ASC"
+                ).fetchall()
+            finally:
+                conn.close()
+            for row in rows:
+                payload = json.loads(str(row["payload"]))
+                entry = TrialLedgerEntry.from_dict(payload)
+                column_previous = row["previous_entry_hash"]
+                column_hash = str(row["entry_hash"])
+                if (
+                    entry.previous_entry_hash != previous
+                    or column_previous != previous
+                    or entry.previous_entry_hash != column_previous
+                    or entry.entry_hash != column_hash
+                ):
+                    return False
+                if entry.with_hashes(entry.previous_entry_hash).entry_hash != entry.entry_hash:
+                    return False
+                previous = entry.entry_hash
+            return True
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError, sqlite3.Error):
+            return False
 
     def update(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
         raise TrialLedgerMutationError("trial ledger is append-only")
 
     def delete(self, *args: Any, **kwargs: Any) -> None:  # noqa: ARG002
         raise TrialLedgerMutationError("trial ledger is append-only")
+
+
+def _is_retryable_operational_error(exc: sqlite3.OperationalError) -> bool:
+    message = str(exc).lower()
+    return "locked" in message or "busy" in message

@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from src.research_ledger.trial_ledger import (
+    TrialLedgerAppendError,
     TrialLedger,
     TrialLedgerEntry,
     TrialLedgerMutationError,
@@ -55,6 +57,8 @@ def test_append_only_hash_chain_and_terminal_records(tmp_path: Path) -> None:
         ledger.update("trial-success")
     with pytest.raises(TrialLedgerMutationError):
         ledger.delete("trial-success")
+    with pytest.raises(TrialLedgerAppendError):
+        ledger.append(_entry("trial-success"))
 
 
 def test_tampering_and_sensitive_or_nonfinite_payloads_are_safe(tmp_path: Path) -> None:
@@ -67,13 +71,48 @@ def test_tampering_and_sensitive_or_nonfinite_payloads_are_safe(tmp_path: Path) 
             metrics_summary={"token": "hidden-token", "nan": float("nan"), "inf": float("inf")},
         )
     )
-    payload = json.dumps(stored.to_dict(), allow_nan=False)
+    with sqlite3.connect(db_path) as conn:
+        payload = conn.execute("SELECT payload FROM trial_entries").fetchone()[0]
     assert "private-secret" not in payload and "hidden-token" not in payload
     assert r"C:\\Users\\private" not in payload
+    assert "NaN" not in payload and "Infinity" not in payload
     assert stored.metrics_summary["nan"] is None and stored.metrics_summary["inf"] is None
 
     with sqlite3.connect(db_path) as conn:
-        raw = json.loads(conn.execute("SELECT payload FROM trial_entries").fetchone()[0])
+        raw = json.loads(payload)
         raw["metrics_summary"]["rank_ic"] = 0.99
         conn.execute("UPDATE trial_entries SET payload = ?", (json.dumps(raw),))
     assert not ledger.verify_hash_chain()
+
+
+@pytest.mark.parametrize("column", ["entry_hash", "previous_entry_hash"])
+def test_verification_checks_database_columns(tmp_path: Path, column: str) -> None:
+    db_path = tmp_path / "ledger.sqlite"
+    ledger = TrialLedger(db_path)
+    ledger.append(_entry("one"))
+    ledger.append(_entry("two"))
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(f"UPDATE trial_entries SET {column} = 'sha256:forged' WHERE trial_id = 'two'")
+    assert not ledger.verify_hash_chain()
+
+
+def test_concurrent_appends_preserve_all_records_and_chain(tmp_path: Path) -> None:
+    ledger = TrialLedger(tmp_path / "ledger.sqlite")
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        list(executor.map(lambda index: ledger.append(_entry(f"concurrent-{index}")), range(24)))
+    assert len(ledger.query()) == 24
+    assert ledger.verify_hash_chain()
+
+
+def test_nonretryable_operational_error_does_not_sleep(tmp_path: Path, monkeypatch) -> None:
+    ledger = TrialLedger(tmp_path / "ledger.sqlite")
+    attempts: list[float] = []
+
+    def fail_connect():
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(ledger, "_connect", fail_connect)
+    monkeypatch.setattr("src.research_ledger.trial_ledger.time.sleep", attempts.append)
+    with pytest.raises(TrialLedgerAppendError, match="disk I/O error"):
+        ledger.append(_entry("io-error"))
+    assert not attempts

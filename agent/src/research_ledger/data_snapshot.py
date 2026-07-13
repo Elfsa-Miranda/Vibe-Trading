@@ -32,6 +32,8 @@ class DataSnapshotManifest:
     st_policy: str | None
     row_counts: dict[str, int]
     missingness_summary: dict[str, float]
+    frame_content_hashes: dict[str, str]
+    content_hash_algorithm: Literal["sha256:canonical_json.v1"]
     generated_at: str
     snapshot_hash: str
     universe: str
@@ -74,6 +76,22 @@ def _universe_payload(frames: dict[str, pd.DataFrame]) -> dict[str, list[str]]:
     return {name: [str(col) for col in frame.columns] for name, frame in sorted(frames.items())}
 
 
+def _frame_content_hash(name: str, frame: pd.DataFrame) -> str:
+    values = [
+        [None if pd.isna(value) else value for value in row]
+        for row in frame.itertuples(index=False, name=None)
+    ]
+    return canonical_json_hash(
+        {
+            "frame_name": name,
+            "index": list(frame.index),
+            "columns": list(frame.columns),
+            "dtypes": [str(dtype) for dtype in frame.dtypes],
+            "values": values,
+        }
+    )
+
+
 def build_data_snapshot(
     panel: dict[str, Any],
     universe: str,
@@ -85,6 +103,9 @@ def build_data_snapshot(
     redacted_config = redact_secrets(source_config)
     source_config_hash = canonical_json_hash(redacted_config)
     universe_payload = _universe_payload(frames)
+    frame_content_hashes = {
+        name: _frame_content_hash(name, frame) for name, frame in sorted(frames.items())
+    }
     universe_hash = canonical_json_hash(
         {"universe": universe, "period": period, "members": universe_payload}
     )
@@ -108,6 +129,8 @@ def build_data_snapshot(
         st_policy=meta.get("st_policy"),
         row_counts=_row_counts(frames),
         missingness_summary=_missingness(frames),
+        frame_content_hashes=frame_content_hashes,
+        content_hash_algorithm="sha256:canonical_json.v1",
         generated_at=utc_now_iso(),
         snapshot_hash="",
         universe=universe,
